@@ -87,7 +87,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $BinName = "iroh-ssh"
+          $BinName = "pigeons"
           $Target = "${{ matrix.platform.target }}"
           $Src = "target/$Target/release/$BinName.exe"
           $OutDir = "dist/$Target"
