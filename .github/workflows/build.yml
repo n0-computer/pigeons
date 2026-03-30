@@ -34,13 +34,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build with cross
-        uses: houseabsolute/actions-rust-cross@v1
+      - name: Install rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          args: --locked --release
-          strip: true
+          targets: ${{ matrix.platform.target }}
+
+      - name: Build
+        shell: bash
+        run: cargo build --locked --release --target ${{ matrix.platform.target }}
 
       - name: Prepare binary
         shell: bash
