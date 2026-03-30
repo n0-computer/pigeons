@@ -109,7 +109,7 @@ jobs:
   test:
     name: Test ${{ matrix.platform.name }}
     needs: build
-    if: ${{ success() }}
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.platform.runs-on }}
     strategy:
       fail-fast: false
