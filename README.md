@@ -101,7 +101,7 @@ Supported on Linux (systemd), macOS (launchd), and Windows (SCM).
 ```
 ┌─────────────┐          ┌─────────────────┐          ┌─────────────┐
 │     SSH     │─────────▶│  QUIC Tunnel    │─────────▶│   pigeons   │
-│   Client    │          │  (P2P Network)  │          │    roost     │
+│   Client    │          │  (P2P Network)  │          │    roost    │
 └─────────────┘          └─────────────────┘          └─────────────┘
       │                           ▲                            │
       │                           │                            │
