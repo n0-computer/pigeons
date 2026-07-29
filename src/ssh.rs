@@ -5,6 +5,7 @@ use ed25519_dalek::SECRET_KEY_LENGTH;
 use homedir::my_home;
 use iroh::{PublicKey, SecretKey};
 use tokio::net::TcpStream;
+use tracing::{debug, info};
 
 pub fn home_ssh_dir() -> anyhow::Result<PathBuf> {
     let distro_home = my_home()?.ok_or_else(|| anyhow::anyhow!("home directory not found"))?;
@@ -19,19 +20,19 @@ pub fn dot_ssh_secret_key(ssh_dir: PathBuf) -> anyhow::Result<SecretKey> {
     let priv_key = ssh_dir.join("pigeons_ed25519");
 
     if !ssh_dir.exists() {
-        tracing::info!("creating ssh directory: {}", ssh_dir.display());
+        info!(path = %ssh_dir.display(), "creating ssh directory");
         std::fs::create_dir_all(&ssh_dir)?;
     }
 
     if pub_key.exists() && priv_key.exists() {
-        tracing::debug!("loading existing keys from {}", ssh_dir.display());
+        debug!(path = %ssh_dir.display(), "loading existing keys");
         let secret_key = std::fs::read(&priv_key)
             .with_context(|| format!("failed to read secret key from {}", priv_key.display()))?;
         let mut sk_bytes = [0u8; SECRET_KEY_LENGTH];
         sk_bytes.copy_from_slice(z32::decode(secret_key.as_slice())?.as_slice());
         Ok(SecretKey::from_bytes(&sk_bytes))
     } else {
-        tracing::info!("generating new keys in {}", ssh_dir.display());
+        info!(path = %ssh_dir.display(), "generating new keys");
         let secret_key = SecretKey::generate();
         let public_key = secret_key.public();
 
@@ -61,7 +62,7 @@ impl fmt::Display for SshConfigPigeonEntry {
 
 /// Add or update a pigeon host entry in ~/.ssh/config using ProxyCommand
 pub fn add_tunnel_host(name: &str, endpoint_id: &PublicKey) -> anyhow::Result<()> {
-    tracing::debug!("adding tunnel host name={name} endpoint={endpoint_id}");
+    debug!(name, endpoint_id = %endpoint_id, "adding tunnel host");
     let config_path = ssh_config_path()?;
 
     if let Some(parent) = config_path.parent() {
@@ -99,7 +100,7 @@ pub fn add_tunnel_host(name: &str, endpoint_id: &PublicKey) -> anyhow::Result<()
 
 /// Remove a pigeon host entry from ~/.ssh/config
 pub fn remove_tunnel_host(name: &str) -> anyhow::Result<()> {
-    tracing::debug!("removing tunnel host name={name}");
+    debug!(name, "removing tunnel host");
     let config_path = ssh_config_path()?;
 
     if !config_path.exists() {
@@ -239,10 +240,10 @@ fn atomic_write(path: &PathBuf, content: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) async fn ensure_local_ssh_server_exists(ssh_port: u16) -> anyhow::Result<()> {
-    tracing::debug!("probing sshd on port {ssh_port}");
+    debug!(port = ssh_port, "probing sshd");
     match TcpStream::connect(format!("127.0.0.1:{}", ssh_port)).await {
         Ok(_) => {
-            tracing::debug!("sshd found on port {ssh_port}");
+            debug!(port = ssh_port, "sshd found");
             Ok(())
         }
         Err(_) => Err(anyhow::anyhow!(format!(

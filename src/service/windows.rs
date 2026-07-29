@@ -19,6 +19,8 @@ use std::{
 #[cfg(target_os = "windows")]
 use tokio::task;
 #[cfg(target_os = "windows")]
+use tracing::{error, info, warn};
+#[cfg(target_os = "windows")]
 use windows_service::{
     Error as WinServiceError,
     service::{
@@ -136,7 +138,7 @@ impl WindowsService {
     fn install_blocking(service_params: ServiceParams) -> anyhow::Result<()> {
         let staged_binary = Self::stage_binary().context("failed to stage service binary")?;
 
-        tracing::info!("Adding Windows Firewall rules for service executable");
+        info!("Adding Windows Firewall rules for service executable");
         firewall::add_firewall_rules(&staged_binary)
             .context("failed to add Windows Firewall rules - ensure running as administrator")?;
 
@@ -167,9 +169,9 @@ impl WindowsService {
         Self::remove_service().context("failed to remove windows service")?;
 
         // Remove Windows Firewall rules (ignore errors on cleanup)
-        tracing::info!("Removing Windows Firewall rules for service");
+        info!("Removing Windows Firewall rules for service");
         if let Err(e) = firewall::remove_firewall_rules() {
-            tracing::warn!("Failed to remove firewall rules (may not exist): {}", e);
+            warn!(err = %e, "Failed to remove firewall rules (may not exist)");
         }
         let staged_binary = Path::new(Self::INSTALL_ROOT).join(Self::SERVICE_BINARY_NAME);
         match fs::remove_file(&staged_binary) {
@@ -564,6 +566,7 @@ mod service_runtime {
     use std::{ffi::OsString, io, sync::mpsc, time::Duration};
 
     use tokio::runtime::Builder;
+    use tracing::{error, info, warn};
     use windows_service::{
         Result as WinResult, define_windows_service,
         service::{
@@ -595,20 +598,20 @@ mod service_runtime {
             .with_ansi(false)
             .init();
 
-        tracing::info!("=== pigeons service starting ===");
+        info!("=== pigeons service starting ===");
 
         if let Err(error) = run_service_worker() {
-            tracing::error!("pigeons service failed: {error:?}");
+            error!(err = ?error, "pigeons service failed");
         }
     }
 
     fn run_service_worker() -> WinResult<()> {
-        tracing::info!("run_service_worker: Starting");
+        info!("run_service_worker: Starting");
 
         let ssh_port = WindowsService::service_port().map_err(anyhow_to_win_error)?;
         let relay_url = WindowsService::service_relay_urls();
 
-        tracing::info!("run_service_worker: SSH port = {}", ssh_port);
+        info!(ssh_port, "run_service_worker: SSH port");
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
         let event_handler = move |control_event| -> ServiceControlHandlerResult {
@@ -645,13 +648,13 @@ mod service_runtime {
             .map_err(|err| anyhow_to_win_error(err.into()))?;
 
         let server_handle = runtime.spawn(async move {
-            tracing::info!("spawning roost task");
+            info!("spawning roost task");
 
             let ssh_dir = std::path::PathBuf::from(WindowsService::SERVICE_SSH_DIR);
             let mut builder = match Tunnel::builder_from_ssh_dir(ssh_dir).await {
                 Ok(b) => b,
                 Err(err) => {
-                    tracing::error!("failed to build tunnel from service ssh dir: {err:?}");
+                    error!(err = ?err, "failed to build tunnel from service ssh dir");
                     return;
                 }
             };
@@ -665,27 +668,27 @@ mod service_runtime {
             match builder.build().await {
                 Ok(tunnel) => {
                     let id = tunnel.endpoint().id();
-                    tracing::info!("roost is running, id={id}");
+                    info!(id = %id, "roost is running");
 
                     // Publish endpoint ID for `pigeons service status`
                     let dir = std::path::Path::new(WindowsService::INSTALL_ROOT);
                     if let Err(err) = std::fs::create_dir_all(dir) {
-                        tracing::warn!("failed to create {}: {err}", dir.display());
+                        warn!(path = %dir.display(), err = %err, "failed to create directory");
                     }
                     if let Err(err) =
                         std::fs::write(dir.join("endpoint_id"), id.to_string().as_bytes())
                     {
-                        tracing::warn!("failed to write endpoint_id: {err}");
+                        warn!(err = %err, "failed to write endpoint_id");
                     }
 
                     // Block until shutdown signal
                     shutdown_rx.recv().ok();
                     if let Err(err) = tunnel.close().await {
-                        tracing::error!("error closing tunnel: {err:?}");
+                        error!(err = ?err, "error closing tunnel");
                     }
                 }
                 Err(err) => {
-                    tracing::error!("failed to build tunnel: {err:?}");
+                    error!(err = ?err, "failed to build tunnel");
                 }
             }
         });

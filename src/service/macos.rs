@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use crate::{Service, ServiceParams};
 
 #[cfg(target_os = "macos")]
@@ -8,7 +10,7 @@ pub struct MacosService;
 impl Service for MacosService {
     async fn install(service_params: ServiceParams) -> anyhow::Result<()> {
         let path = MacosService::init_install_script(service_params)?;
-        tracing::debug!("running install script: {}", path.display());
+        debug!(path = %path.display(), "running install script");
 
         let status = std::process::Command::new("sh")
             .arg(&path)
@@ -30,7 +32,7 @@ impl Service for MacosService {
 
     async fn uninstall() -> anyhow::Result<()> {
         let path = MacosService::init_uninstall_script()?;
-        tracing::debug!("running uninstall script: {}", path.display());
+        debug!(path = %path.display(), "running uninstall script");
 
         let status = std::process::Command::new("sh")
             .arg(&path)

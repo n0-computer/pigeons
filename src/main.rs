@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 pigeons::Tunnel::builder_from_ssh_dir(ssh_dir).await?
             };
-            builder.roost = Some(pigeons::RoostConfig {
+            builder.ssh = Some(pigeons::SshConfig {
                 ssh_port: args.ssh_port,
             });
             for url in &args.relay_url {

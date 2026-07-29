@@ -2,13 +2,14 @@ use std::{path::Path, process::Command};
 
 #[cfg(target_os = "windows")]
 use anyhow::{Context, Result, bail};
+use tracing::{info, warn};
 
 pub fn add_firewall_rules(executable_path: &Path) -> Result<()> {
     let exe_path = executable_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("executable path contains invalid UTF-8"))?;
 
-    tracing::info!("Adding Windows Firewall rules for: {}", exe_path);
+    info!(path = exe_path, "Adding Windows Firewall rules");
 
     let ps_script = format!(
         r#"
@@ -83,13 +84,13 @@ Write-Host 'Added HTTPS rule'
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    tracing::info!("Firewall rules added successfully: {}", stdout);
+    info!(output = %stdout, "Firewall rules added successfully");
 
     Ok(())
 }
 
 pub fn remove_firewall_rules() -> Result<()> {
-    tracing::info!("Removing Windows Firewall rules for pigeons");
+    info!("Removing Windows Firewall rules for pigeons");
 
     let ps_script = r#"
 $ErrorActionPreference = 'Stop'
@@ -119,14 +120,10 @@ Write-Host 'Removed HTTPS rule'
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Don't fail on cleanup - just log the error
-        tracing::warn!(
-            "Failed to remove some firewall rules (may not exist).\nStdout: {}\nStderr: {}",
-            stdout,
-            stderr
-        );
+        warn!(stdout = %stdout, stderr = %stderr, "Failed to remove some firewall rules (may not exist)");
     } else {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        tracing::info!("Firewall rules removed successfully: {}", stdout);
+        info!(output = %stdout, "Firewall rules removed successfully");
     }
 
     Ok(())

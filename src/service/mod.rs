@@ -1,3 +1,5 @@
+use tracing::{info, warn};
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -59,7 +61,7 @@ pub fn resolve_binary_path() -> anyhow::Result<std::path::PathBuf> {
         }
     }
 
-    tracing::info!("resolved pigeons binary path: {}", resolved.display());
+    info!(path = %resolved.display(), "resolved pigeons binary path");
     Ok(resolved)
 }
 
@@ -73,10 +75,10 @@ pub trait Service {
 }
 
 pub async fn install(service_params: ServiceParams) -> anyhow::Result<()> {
-    tracing::info!(
-        "installing service for os={}, ssh_port={}",
-        std::env::consts::OS,
-        service_params.ssh_port
+    info!(
+        os = std::env::consts::OS,
+        ssh_port = service_params.ssh_port,
+        "installing service"
     );
     match std::env::consts::OS {
         #[cfg(target_os = "linux")]
@@ -123,9 +125,7 @@ pub fn service_endpoint_id() -> Option<iroh::EndpointId> {
         "macos" => "/etc/pigeons/endpoint_id",
         "windows" => "C:\\ProgramData\\pigeons\\endpoint_id",
         _ => {
-            tracing::warn!(
-                "service-level endpoint id is only supported on linux, macos, and windows"
-            );
+            warn!("service-level endpoint id is only supported on linux, macos, and windows");
             return None;
         }
     };

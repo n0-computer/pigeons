@@ -1,5 +1,6 @@
 use iroh::{endpoint::Connection, protocol::ProtocolHandler};
 use tokio::net::TcpStream;
+use tracing::{error, info};
 
 use crate::tunnel::copy_flush;
 
@@ -24,11 +25,11 @@ impl ProtocolHandler for PigeonsProtocol {
 
         match connection.accept_bi().await {
             Ok((mut iroh_send, mut iroh_recv)) => {
-                tracing::info!("pigeon arrived from {endpoint_id}");
+                info!(endpoint_id = %endpoint_id, "pigeon arrived");
 
                 match TcpStream::connect(format!("127.0.0.1:{}", self.ssh_port)).await {
                     Ok(ssh_stream) => {
-                        tracing::info!("delivering to local sshd on port {}", self.ssh_port);
+                        info!(port = self.ssh_port, "delivering to local sshd");
                         ssh_stream.set_nodelay(true).ok();
 
                         let (mut local_read, mut local_write) = ssh_stream.into_split();
@@ -39,21 +40,21 @@ impl ProtocolHandler for PigeonsProtocol {
                         tokio::select! {
                             result = a_to_b => {
                                 let _ = result;
-                                tracing::info!("pigeon from {endpoint_id} returned home");
+                                info!(endpoint_id = %endpoint_id, "pigeon returned home");
                             },
                             result = b_to_a => {
                                 let _ = result;
-                                tracing::info!("pigeon from {endpoint_id} returned home");
+                                info!(endpoint_id = %endpoint_id, "pigeon returned home");
                             },
                         };
                     }
                     Err(e) => {
-                        tracing::error!("pigeon couldn't reach sshd: {e}");
+                        error!(err = %e, "pigeon couldn't reach sshd");
                     }
                 }
             }
             Err(e) => {
-                tracing::error!("pigeon dropped its message: {e}");
+                error!(err = %e, "pigeon dropped its message");
             }
         }
 
