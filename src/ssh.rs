@@ -42,6 +42,11 @@ pub async fn dot_ssh_secret_key(ssh_dir: PathBuf) -> anyhow::Result<SecretKey> {
     }
 }
 
+/// Load or create the persistent identity stored in `ssh_dir` and return its endpoint ID.
+pub async fn persistent_endpoint_id(ssh_dir: PathBuf) -> anyhow::Result<PublicKey> {
+    Ok(dot_ssh_secret_key(ssh_dir).await?.public())
+}
+
 /// Write the secret key, readable only by its owner on unix.
 ///
 /// This key is the roost's identity, so anyone able to read it can impersonate

@@ -1,15 +1,17 @@
 use std::{
     io::{self, IsTerminal},
-    path::Path,
+    net::SocketAddr,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
 use clap::{ArgAction, Args, Parser, Subcommand};
-use iroh::{EndpointId, RelayUrl};
+use iroh::{EndpointAddr, EndpointId, RelayUrl};
 use iroh_pigeons::{
     Config, RoostConfig, ServiceParams, Tunnel, add_tunnel_host, home_ssh_dir, install_service,
-    list_tunnel_hosts, publish_telemetry_choice_for_service, remove_tunnel_host,
-    resolve_binary_path, restart_service, service_endpoint_id, service_log, uninstall_service,
+    list_tunnel_hosts, persistent_endpoint_id, publish_telemetry_choice_for_service,
+    remove_tunnel_host, resolve_binary_path, restart_service, service_endpoint_id, service_log,
+    uninstall_service,
 };
 use tokio::{
     fs,
@@ -67,6 +69,8 @@ pub enum Cmd {
     Version,
     /// Print the paths used for config and other files
     Paths,
+    /// Print the endpoint ID for a persistent identity
+    EndpointId(EndpointIdArgs),
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -113,8 +117,23 @@ pub struct FlyArgs {
     #[arg(long, default_value_t = false)]
     pub stdio: bool,
 
+    /// Directory containing the persistent identity used by this client
+    #[arg(long, value_name = "DIR")]
+    pub key_dir: Option<PathBuf>,
+
+    /// Direct socket address for the remote endpoint (repeatable)
+    #[arg(long, value_name = "ADDR", action = ArgAction::Append)]
+    pub direct_address: Vec<SocketAddr>,
+
     #[arg(long, value_name = "URL", help = RELAY_URL_HELP, action = ArgAction::Append)]
     pub relay_url: Vec<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EndpointIdArgs {
+    /// Directory containing the persistent identity
+    #[arg(long, value_name = "DIR")]
+    pub key_dir: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -308,23 +327,23 @@ async fn main() -> anyhow::Result<()> {
                 .await
         }
         Cmd::Fly(args) => {
-            let mut builder = Tunnel::builder_ephemeral().await?;
-            for url in &args.relay_url {
-                builder.relay_urls.push(
-                    RelayUrl::from_str(url)
-                        .map_err(|e| anyhow::anyhow!("invalid relay URL '{url}': {e}"))?,
-                );
-            }
+            let mut builder = match args.key_dir {
+                Some(key_dir) => Tunnel::builder_from_ssh_dir(key_dir).await?,
+                None => Tunnel::builder_ephemeral().await?,
+            };
+            let relay_urls = parse_relay_urls(&args.relay_url)?;
+            builder.relay_urls = relay_urls.clone();
             let tunnel = builder.build().await?;
             tunnel
                 .clone()
                 .close_after(async move {
                     let remote_id = EndpointId::from_str(&args.public_key)?;
+                    let remote = endpoint_addr(remote_id, relay_urls, args.direct_address);
 
                     if args.stdio {
-                        tunnel.fly_stdio(remote_id).await?;
+                        tunnel.fly_stdio(remote).await?;
                     } else {
-                        let fut = tunnel.fly(remote_id);
+                        let fut = tunnel.fly(remote);
                         tokio::select! {
                             res = fut => {
                                 if let Err(err) = res {
@@ -340,6 +359,11 @@ async fn main() -> anyhow::Result<()> {
                     Ok(())
                 })
                 .await
+        }
+        Cmd::EndpointId(args) => {
+            let key_dir = args.key_dir.unwrap_or(home_ssh_dir()?);
+            println!("{}", persistent_endpoint_id(key_dir).await?);
+            Ok(())
         }
         Cmd::Add(args) => {
             let name = args.name.unwrap_or_else(|| default_route_name(&args.id));
@@ -470,6 +494,29 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+fn parse_relay_urls(urls: &[String]) -> anyhow::Result<Vec<RelayUrl>> {
+    urls.iter()
+        .map(|url| {
+            RelayUrl::from_str(url).map_err(|e| anyhow::anyhow!("invalid relay URL '{url}': {e}"))
+        })
+        .collect()
+}
+
+fn endpoint_addr(
+    id: EndpointId,
+    relay_urls: Vec<RelayUrl>,
+    direct_addresses: Vec<SocketAddr>,
+) -> EndpointAddr {
+    relay_urls.into_iter().fold(
+        direct_addresses
+            .into_iter()
+            .fold(EndpointAddr::new(id), |addr, direct| {
+                addr.with_ip_addr(direct)
+            }),
+        |addr, relay| addr.with_relay_url(relay),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,6 +571,8 @@ mod tests {
         let stdio = Cmd::Fly(FlyArgs {
             public_key: "abc".to_string(),
             stdio: true,
+            key_dir: None,
+            direct_address: vec![],
             relay_url: vec![],
         });
         assert!(!should_ask_about_telemetry(&stdio));
@@ -535,9 +584,26 @@ mod tests {
         assert!(!should_ask_about_telemetry(&Cmd::List));
         assert!(!should_ask_about_telemetry(&Cmd::Version));
         assert!(!should_ask_about_telemetry(&Cmd::Paths));
+        assert!(!should_ask_about_telemetry(&Cmd::EndpointId(
+            EndpointIdArgs { key_dir: None }
+        )));
         assert!(!should_ask_about_telemetry(&Cmd::Service {
             op: ServiceCmd::Status
         }));
+    }
+
+    #[tokio::test]
+    async fn endpoint_addr_includes_explicit_relay_and_direct_routes() {
+        let id = persistent_endpoint_id(tempfile::tempdir().unwrap().path().to_path_buf())
+            .await
+            .unwrap();
+        let relay: RelayUrl = "https://relay.example.com".parse().unwrap();
+        let direct: SocketAddr = "192.0.2.1:4242".parse().unwrap();
+
+        let addr = endpoint_addr(id, vec![relay], vec![direct]);
+
+        assert!(addr.addrs.iter().any(|address| address.is_relay()));
+        assert!(addr.addrs.iter().any(|address| address.is_ip()));
     }
 
     /// Regression: the ID is not validated until after the name is derived, so
