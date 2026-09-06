@@ -153,18 +153,16 @@ impl Tunnel {
             .await?;
         tracing::debug!("fly_stdio: connected, opening bidirectional stream");
         let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
+        iroh_send
+            .write_all(&PigeonsProtocol::STREAM_PREFACE)
+            .await?;
+        iroh_send.flush().await?;
         tracing::debug!("fly_stdio: bridging stdin/stdout");
 
         let mut stdin = io::stdin();
         let mut stdout = io::stdout();
 
-        let stdin_to_iroh = copy_flush(&mut stdin, &mut iroh_send);
-        let iroh_to_stdout = copy_flush(&mut iroh_recv, &mut stdout);
-
-        tokio::select! {
-            result = stdin_to_iroh => { result?; }
-            result = iroh_to_stdout => { result?; }
-        }
+        copy_both(&mut stdin, &mut stdout, &mut iroh_recv, &mut iroh_send).await?;
 
         Ok(())
     }
@@ -230,21 +228,49 @@ async fn bridge_connection(
     let conn = endpoint.connect(remote_id, PigeonsProtocol::ALPN).await?;
     tracing::debug!("bridge_connection: connected, opening bi stream");
     let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
+    iroh_send
+        .write_all(&PigeonsProtocol::STREAM_PREFACE)
+        .await?;
+    iroh_send.flush().await?;
     let (mut tcp_read, mut tcp_write) = tcp_stream.into_split();
 
-    let tcp_to_iroh = copy_flush(&mut tcp_read, &mut iroh_send);
-    let iroh_to_tcp = copy_flush(&mut iroh_recv, &mut tcp_write);
-
-    tokio::select! {
-        result = tcp_to_iroh => {
-            let _ = result;
-        }
-        result = iroh_to_tcp => {
-            let _ = result;
-        }
-    }
+    copy_both(
+        &mut tcp_read,
+        &mut tcp_write,
+        &mut iroh_recv,
+        &mut iroh_send,
+    )
+    .await?;
 
     Ok(())
+}
+
+pub(crate) async fn copy_both<AR, AW, BR, BW>(
+    a_reader: &mut AR,
+    a_writer: &mut AW,
+    b_reader: &mut BR,
+    b_writer: &mut BW,
+) -> io::Result<(u64, u64)>
+where
+    AR: AsyncRead + Unpin,
+    AW: AsyncWrite + Unpin,
+    BR: AsyncRead + Unpin,
+    BW: AsyncWrite + Unpin,
+{
+    tokio::try_join!(
+        copy_flush_and_shutdown(a_reader, b_writer),
+        copy_flush_and_shutdown(b_reader, a_writer),
+    )
+}
+
+async fn copy_flush_and_shutdown<R, W>(reader: &mut R, writer: &mut W) -> io::Result<u64>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let copied = copy_flush(reader, writer).await?;
+    writer.shutdown().await?;
+    Ok(copied)
 }
 
 /// Copy data from reader to writer, flushing after every write.
