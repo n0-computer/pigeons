@@ -79,6 +79,7 @@ impl Config {
             .open(config_file_path)
             .await?;
         file.write_all(toml::to_string(self)?.as_bytes()).await?;
+        file.flush().await?;
         Ok(())
     }
 
