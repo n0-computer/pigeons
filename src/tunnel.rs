@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use iroh::{
-    Endpoint, EndpointId, RelayUrl, SecretKey,
+    Endpoint, EndpointId, RelayMap, RelayUrl, SecretKey,
     endpoint::{RelayMode, presets},
     protocol::Router,
 };
@@ -22,6 +22,13 @@ use crate::{
     protocol::PigeonsProtocol,
     ssh::{self, dot_ssh_secret_key},
 };
+
+const DEFAULT_RELAY_URLS: [&str; 4] = [
+    "https://ee92s2vncvnx9k0vd.euc1.relay.iroh-svc.com/",
+    "https://ee92s2vncvnx9k0vd.use1.relay.iroh-svc.com/",
+    "https://ee92s2vncvnx9k0vd.usw1.relay.iroh-svc.com/",
+    "https://ee92s2vncvnx9k0vd.aps1.relay.iroh-svc.com/",
+];
 
 #[derive(Debug)]
 pub struct RoostConfig {
@@ -42,8 +49,8 @@ pub struct TunnelBuilder {
     /// ED25519 key to use to secure tunnel communications, the endpoint ID that
     /// identifies the tunnel is the public half of this keypair
     pub secret_key: SecretKey,
-    /// the set of iroh relay urls to use. Empty set will default to public
-    /// relay servers run by number 0
+    /// the set of iroh relay urls to use. Empty set will use pigeons' default
+    /// relay servers
     pub relay_urls: Vec<RelayUrl>,
     /// iroh services client for telemetry aggregation
     pub isvc_api_secret: Option<ApiSecret>,
@@ -70,13 +77,18 @@ impl TunnelBuilder {
 
     pub async fn build(self) -> Result<Tunnel> {
         tracing::debug!("building tunnel, roost={}", self.roost.is_some());
-        let mut builder = Endpoint::builder(presets::N0).secret_key(self.secret_key.clone());
-
-        if !self.relay_urls.is_empty() {
+        let relay_map = if self.relay_urls.is_empty() {
+            tracing::debug!("using {} default relay URLs", DEFAULT_RELAY_URLS.len());
+            RelayMap::try_from_iter(DEFAULT_RELAY_URLS)
+                .context("pigeons contains an invalid default relay URL")?
+        } else {
             tracing::debug!("using {} custom relay URLs", self.relay_urls.len());
-            let relay_map = self.relay_urls.iter().cloned().collect();
-            builder = builder.relay_mode(RelayMode::Custom(relay_map));
-        }
+            self.relay_urls.iter().cloned().collect()
+        };
+
+        let builder = Endpoint::builder(presets::N0)
+            .secret_key(self.secret_key.clone())
+            .relay_mode(RelayMode::Custom(relay_map));
 
         let endpoint = builder.bind().await?;
         tracing::info!("endpoint bound, id={}", endpoint.id());
