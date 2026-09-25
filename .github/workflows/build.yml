@@ -9,6 +9,10 @@ on:
       - main
     types: [opened, synchronize, reopened]
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build ${{ matrix.platform.name }}
@@ -33,6 +37,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install rust stable (unix)
         if: runner.os != 'Windows'
