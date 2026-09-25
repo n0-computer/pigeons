@@ -55,12 +55,12 @@ jobs:
           echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
           echo "version is: ${{ env.RELEASE_VERSION }}"
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
       - name: Create GitHub release
         if: github.event.inputs.create_release == 'true' || github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           name: ${{ env.RELEASE_VERSION }}
@@ -124,13 +124,13 @@ jobs:
     steps:
       - name: Checkout repository
         if: inputs.base_hash == ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
 
       - name: Checkout specified commit
         if: inputs.base_hash != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.base_hash }}
           fetch-depth: 1
@@ -142,8 +142,9 @@ jobs:
           echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           toolchain: ${{ matrix.rust }}
           targets: ${{ matrix.cargo_targets }}
 
@@ -175,7 +176,7 @@ jobs:
       - name: Cache AWS CLI
         if: matrix.os != 'windows-latest'
         id: cache-awscli
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/awscli
           key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -245,7 +246,7 @@ jobs:
 
       - name: Upload release archive to GitHub
         if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.create-release.outputs.release_version }}
           files: ${{ env.ASSET }}
@@ -259,7 +260,7 @@ jobs:
     if: github.event.inputs.mark_latest == 'true' || github.event_name == 'push'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
       - name: Set AWS credentials
