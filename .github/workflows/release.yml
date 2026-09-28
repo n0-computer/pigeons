@@ -64,7 +64,7 @@ jobs:
           echo "RELEASE_VERSION=$INPUT_RELEASE_VERSION" >> "$GITHUB_ENV"
           echo "version is: $INPUT_RELEASE_VERSION"
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
@@ -138,14 +138,14 @@ jobs:
     steps:
       - name: Checkout repository
         if: inputs.base_hash == ''
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
 
       - name: Checkout specified commit
         if: inputs.base_hash != ''
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ inputs.base_hash }}
@@ -158,7 +158,7 @@ jobs:
           echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: ${{ matrix.rust }}
           targets: ${{ matrix.cargo_targets }}
@@ -191,7 +191,7 @@ jobs:
       - name: Cache AWS CLI
         if: matrix.os != 'windows-latest'
         id: cache-awscli
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/awscli
           key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -281,7 +281,7 @@ jobs:
     if: github.event.inputs.mark_latest == 'true' || github.event_name == 'push'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
