@@ -51,6 +51,7 @@ pub fn resolve_binary_path() -> anyhow::Result<PathBuf> {
             "/opt/",
             "/usr/local/sbin",
             "/usr/sbin",
+            "/var/usrlocal/bin/", // `/usr/local/bin` is a symlink to this in immutable Fedora distros.
         ];
 
         let path_str = resolved
