@@ -1,0 +1,5 @@
+rules:
+  cache-poisoning:
+    ignore:
+      # AWS CLI installer zip only -- not an input to the built binary.
+      - release.yml
