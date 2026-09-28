@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use iroh::{
-    Endpoint, EndpointId, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, RelayUrl, SecretKey,
     endpoint::{RelayMode, presets},
     protocol::Router,
 };
@@ -135,18 +135,19 @@ impl Tunnel {
         Ok(builder)
     }
 
-    pub async fn fly(&self, remote: EndpointId) -> Result<()> {
+    pub async fn fly(&self, remote: impl Into<EndpointAddr>) -> Result<()> {
         let bind_addr = format!("127.0.0.1:{}", 0);
         let listener = TcpListener::bind(&bind_addr).await?;
         tracing::info!("fly: listening on {}", listener.local_addr()?);
-        prepare_pigeon(self.endpoint().clone(), listener, remote).await
+        prepare_pigeon(self.endpoint().clone(), listener, remote.into()).await
     }
 
     /// Bridge stdin/stdout directly to a remote roost via iroh.
     /// Designed for use as an SSH ProxyCommand:
     ///   ProxyCommand pigeons fly --stdio <endpoint_id>
-    pub async fn fly_stdio(&self, remote: EndpointId) -> Result<()> {
-        tracing::debug!("fly_stdio: connecting to {remote}");
+    pub async fn fly_stdio(&self, remote: impl Into<EndpointAddr>) -> Result<()> {
+        let remote = remote.into();
+        tracing::debug!("fly_stdio: connecting to {}", remote.id);
         let conn = self
             .endpoint()
             .connect(remote, PigeonsProtocol::ALPN)
@@ -198,13 +199,14 @@ impl Tunnel {
 async fn prepare_pigeon(
     endpoint: Endpoint,
     listener: TcpListener,
-    remote: EndpointId,
+    remote: EndpointAddr,
 ) -> Result<()> {
     loop {
         match listener.accept().await {
             Ok((tcp_stream, peer_addr)) => {
                 tracing::info!("pigeon departing from {peer_addr}");
                 let endpoint = endpoint.clone();
+                let remote = remote.clone();
                 tokio::spawn(async move {
                     if let Err(e) = bridge_connection(tcp_stream, &endpoint, remote).await {
                         tracing::error!("pigeon lost in transit: {e}");
@@ -223,11 +225,11 @@ async fn prepare_pigeon(
 async fn bridge_connection(
     tcp_stream: TcpStream,
     endpoint: &Endpoint,
-    remote_id: EndpointId,
+    remote: EndpointAddr,
 ) -> anyhow::Result<()> {
     tcp_stream.set_nodelay(true)?;
-    tracing::debug!("bridge_connection: connecting to {remote_id}");
-    let conn = endpoint.connect(remote_id, PigeonsProtocol::ALPN).await?;
+    tracing::debug!("bridge_connection: connecting to {}", remote.id);
+    let conn = endpoint.connect(remote, PigeonsProtocol::ALPN).await?;
     tracing::debug!("bridge_connection: connected, opening bi stream");
     let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
     let (mut tcp_read, mut tcp_write) = tcp_stream.into_split();

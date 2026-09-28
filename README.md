@@ -160,6 +160,9 @@ machine-wide config yourself.
 # Client
 > pigeons fly <ENDPOINT_ID>                 # quick connect (binds local port)
 > pigeons fly --stdio <ENDPOINT_ID>         # ProxyCommand mode (used by ssh config)
+> pigeons endpoint-id --key-dir <DIR>       # create/read a persistent client identity
+> pigeons fly --key-dir <DIR> <ENDPOINT_ID> # reuse that client identity
+> pigeons fly --relay-url <URL> --direct-address <IP:PORT> <ENDPOINT_ID>
 > pigeons add --id <ID> --name <NAME>       # add SSH config entry
 > pigeons list                              # list pigeon routes
 > pigeons remove <NAME>                     # remove SSH config entry

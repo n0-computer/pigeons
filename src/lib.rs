@@ -11,6 +11,6 @@ pub use service::{
 };
 pub use ssh::{
     SshConfigPigeonEntry, add_tunnel_host, dot_ssh_secret_key, home_ssh_dir, list_tunnel_hosts,
-    remove_tunnel_host,
+    persistent_endpoint_id, remove_tunnel_host,
 };
 pub use tunnel::{RoostConfig, Tunnel, TunnelBuilder};
