@@ -135,6 +135,29 @@ pub struct RemoveArgs {
     pub name: String,
 }
 
+/// Whether this process is running on Android: bionic mounts the system
+/// partition at `/system`, and `build.prop` exists on every device. Plain
+/// Linux machines never have that path.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_android() -> bool {
+    Path::new("/system/build.prop").exists()
+}
+
+/// The `service` subcommand needs a daemon manager (systemd, launchd, or the
+/// Windows SCM) to host the roost. Android has none, so reject it up front
+/// with an actionable message instead of failing deep inside the linux
+/// backend on a missing `systemctl`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn android_service_unsupported() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "pigeons service is not supported on Android: there is no daemon manager to host it. \
+         Run `pigeons roost` in the foreground instead. In Termux, detach it with:
+
+          pigeons roost &
+          termux:background"
+    )
+}
+
 /// Whether this invocation is one we can interrupt with the telemetry question.
 /// Only a person setting pigeons up at a terminal should ever see it.
 fn should_ask_about_telemetry(cmd: &Cmd) -> bool {
@@ -401,6 +424,11 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::Service { op } => {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if is_android() {
+                android_service_unsupported()?;
+            }
+
             match op {
                 ServiceCmd::Install {
                     ssh_port,

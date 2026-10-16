@@ -60,6 +60,23 @@ script:
 curl -fSsL https://vorc.s3.us-east-2.amazonaws.com/pigeons-install.sh | bash
 ```
 
+### Android (Termux)
+
+pigeons runs on Android through [Termux](https://termux.dev). The install
+script detects the device and its architecture, pulls the matching
+`android-*` binary, and installs it into the Termux prefix. The phone is
+the client — add a route and SSH out as usual:
+
+```bash
+pigeons add --id bb8e1a5661a6dfa9ae2dd978922f30f524f6fd8c99b3de021c53f292aae74330 --name my-server
+ssh user@my-server
+```
+
+`roost` works on a device too as long as an `sshd` is running locally, but
+it must live in a Termux session: detach it with `termux:background` instead
+of `pigeons service`, which is not supported on Android (there is no daemon
+manager to host it).
+
 ## Getting Started
 
 ### Server
@@ -97,7 +114,8 @@ Then connect with standard ssh, from anywhere:
 ### Service Mode
 
 Install pigeons as a system service for always-on access. Supported on Linux
-(systemd), macOS (launchd), and Windows (SCM):
+(systemd), macOS (launchd), and Windows (SCM); not on Android, where
+`pigeons roost` must run in a foreground session:
 
 ```bash
 > pigeons service install                   # default SSH port 22

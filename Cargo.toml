@@ -77,4 +77,7 @@ features = [
 [profile.release]
 opt-level = 3
 lto = true
-panic = "abort"
+# unwind, not abort: android (Termux) has no JNI context, and iroh's default
+# DnsResolver detects that by catching a panic — under panic=abort the catch
+# is inert and the process aborts on the first DNS lookup.
+panic = "unwind"
