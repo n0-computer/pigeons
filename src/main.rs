@@ -1,7 +1,9 @@
 use std::{
     io::{self, IsTerminal},
     path::Path,
+    pin::Pin,
     str::FromStr,
+    time::Duration,
 };
 
 use clap::{ArgAction, Args, Parser, Subcommand};
@@ -15,6 +17,8 @@ use tokio::{
     fs,
     io::{self as async_io, AsyncBufRead, AsyncBufReadExt, BufReader},
     signal,
+    sync::watch,
+    time::timeout,
 };
 
 const RELAY_URL_HELP: &str = "use this relay server, replacing the defaults (repeatable)";
@@ -320,23 +324,27 @@ async fn main() -> anyhow::Result<()> {
                 .clone()
                 .close_after(async move {
                     let remote_id = EndpointId::from_str(&args.public_key)?;
-
-                    if args.stdio {
-                        tunnel.fly_stdio(remote_id).await?;
-                    } else {
-                        let fut = tunnel.fly(remote_id);
-                        tokio::select! {
-                            res = fut => {
-                                if let Err(err) = res {
-                                    eprintln!("error: {err}");
-                                };
-                            }
-                            _ = signal::ctrl_c() => {
-                                println!("shutting down...");
-                            }
+                    let (cancel_tx, cancel_rx) = watch::channel(false);
+                    let mut fut: Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>> =
+                        if args.stdio {
+                            Box::pin(tunnel.fly_stdio(remote_id, cancel_rx))
+                        } else {
+                            Box::pin(tunnel.fly(remote_id, cancel_rx))
                         };
+                    tokio::select! {
+                        res = &mut fut => {
+                            if let Err(err) = res {
+                                eprintln!("error: {err}");
+                            }
+                        }
+                        _ = signal::ctrl_c() => {
+                            println!("shutting down...");
+                            let _ = cancel_tx.send(true);
+                            // Give the session a moment to cancel cleanly.
+                            let _ =
+                                timeout(Duration::from_secs(2), &mut fut).await;
+                        }
                     }
-
                     Ok(())
                 })
                 .await

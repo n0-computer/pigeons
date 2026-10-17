@@ -43,9 +43,14 @@ tokio = { version = "1.52.3", features = [
     "signal",
     "macros",
     "io-util",
+    "io-std",
     "sync",
     "rt",
+    "rt-multi-thread",
+    "time",
+    "net",
 ] }
+parking_lot = "0.12"
 clap = { version = "4.6.1", features = ["derive"] }
 homedir = "0.3.6"
 whoami = "2.1.2"
