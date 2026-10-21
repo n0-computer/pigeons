@@ -100,6 +100,9 @@ jobs:
             macOS-arm-latest,
             macOS-latest,
             windows-latest,
+            android-aarch64,
+            android-armv7,
+            android-x86_64,
           ]
         rust: [stable]
         include:
@@ -139,6 +142,28 @@ jobs:
             target: windows-x86_64
             cargo_targets: "x86_64-pc-windows-msvc"
             runner: [windows-latest]
+          # Android cross-compiles on a hosted runner with the NDK.
+          - name: android-aarch64
+            os: ubuntu-latest
+            release-os: android
+            release-arch: aarch64
+            target: android-aarch64
+            cargo_targets: "aarch64-linux-android"
+            runner: [ubuntu-latest]
+          - name: android-armv7
+            os: ubuntu-latest
+            release-os: android
+            release-arch: armv7
+            target: android-armv7
+            cargo_targets: "armv7-linux-androideabi"
+            runner: [ubuntu-latest]
+          - name: android-x86_64
+            os: ubuntu-latest
+            release-os: android
+            release-arch: x86_64
+            target: android-x86_64
+            cargo_targets: "x86_64-linux-android"
+            runner: [ubuntu-latest]
     steps:
       - name: Checkout repository
         if: inputs.base_hash == ''
@@ -171,6 +196,12 @@ jobs:
         if: ${{ contains(matrix.cargo_targets, '-musl') }}
         run: sudo apt-get install musl-tools -y
 
+      - name: Download Android NDK
+        if: contains(matrix.name, 'android')
+        run: |
+          curl -fLo ndk.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q ndk.zip
+
       - name: Build release binary (unix)
         if: matrix.os != 'windows-latest'
         shell: bash
@@ -180,6 +211,21 @@ jobs:
           if [ "${{ matrix.name }}" = "ubuntu-arm-latest" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
             export CC=aarch64-linux-gnu-gcc
+          fi
+          if [ "${{ matrix.name }}" = "android-aarch64" ]; then
+            export PATH="$GITHUB_WORKSPACE/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+            export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android24-clang
+            export CC_aarch64-linux-android=aarch64-linux-android24-clang
+          fi
+          if [ "${{ matrix.name }}" = "android-armv7" ]; then
+            export PATH="$GITHUB_WORKSPACE/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+            export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=armv7a-linux-androideabi24-clang
+            export CC_armv7_linux_androideabi=armv7a-linux-androideabi24-clang
+          fi
+          if [ "${{ matrix.name }}" = "android-x86_64" ]; then
+            export PATH="$GITHUB_WORKSPACE/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+            export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=x86_64-linux-android24-clang
+            export CC_x86_64_linux_android=x86_64-linux-android24-clang
           fi
           if [ "${{ contains(matrix.cargo_targets, '-musl') }}" = "true" ]; then
             export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static -C link-arg=-static"
@@ -201,14 +247,14 @@ jobs:
           key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Download awscli (linux x86_64)
-        if: matrix.os == 'ubuntu-latest' && matrix.release-arch == 'amd64' && steps.cache-awscli.outputs.cache-hit != 'true'
+        if: matrix.os == 'ubuntu-latest' && runner.arch == 'X64' && steps.cache-awscli.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/awscli
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
           cd ~/awscli && unzip -oq awscliv2.zip
 
       - name: Download awscli (linux aarch64)
-        if: matrix.os == 'ubuntu-latest' && matrix.release-arch == 'aarch64' && steps.cache-awscli.outputs.cache-hit != 'true'
+        if: matrix.os == 'ubuntu-latest' && runner.arch == 'ARM64' && steps.cache-awscli.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/awscli
           curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o ~/awscli/awscliv2.zip
