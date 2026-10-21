@@ -7,7 +7,7 @@ repository = "https://github.com/n0-computer/pigeons"
 readme = "README.md"
 keywords = ["networking"]
 categories = ["network-programming"]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 rust-version = "1.91"
 
