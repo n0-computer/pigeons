@@ -141,7 +141,8 @@ pub async fn add_tunnel_host(name: &str, endpoint_id: &PublicKey) -> anyhow::Res
         "Host {name}\n\
          \x20   ProxyCommand pigeons fly --stdio {endpoint_id}\n\
          \x20   UserKnownHostsFile /dev/null\n\
-         \x20   StrictHostKeyChecking no\n"
+         \x20   StrictHostKeyChecking no\n\
+         \x20   ServerAliveInterval 0\n"
     );
 
     let mut new_content = cleaned;

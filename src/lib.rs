@@ -1,6 +1,7 @@
 mod config;
 mod protocol;
 mod service;
+mod session;
 mod ssh;
 mod tunnel;
 

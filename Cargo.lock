@@ -1721,6 +1721,7 @@ dependencies = [
  "homedir",
  "iroh",
  "iroh-services",
+ "parking_lot",
  "self-runas",
  "serde",
  "tempfile",
