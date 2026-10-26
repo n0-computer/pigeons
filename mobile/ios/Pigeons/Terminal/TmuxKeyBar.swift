@@ -30,7 +30,8 @@ struct TmuxKeyBar: View {
                 .foregroundStyle(Color.white)
         }
         .buttonStyle(.plain)
-        .padding(.trailing, 8)
+        // Same gap on both sides so the scrolling rows stop short of the button.
+        .padding(.horizontal, 8)
         .accessibilityLabel(controller.keyboardShown ? "Hide keyboard" : "Show keyboard")
     }
 
