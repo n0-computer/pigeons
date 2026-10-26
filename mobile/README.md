@@ -156,8 +156,11 @@ which is the point of tmux.
   those constants macOS-only. `core/Cargo.toml` pins `libc = "=0.2.189"`; if
   something pulls a newer libc in, run `cargo update -p libc --precise
   0.2.189`. Lift the pin when netwatch no longer relies on them on iOS.
-- *Linker errors about `_res_9_*` or `_SCDynamicStore*`* when building the app:
-  the Rust static library needs `libresolv` and SystemConfiguration, which
-  `project.yml` links. Regenerate the project after editing it.
+- *Undefined symbols `_res_9_*`, `_SCDynamicStore*` or `_nw_*`* when linking
+  the app: a Rust static library does not carry its link directives, so the
+  app has to link `libresolv`, SystemConfiguration and Network itself.
+  `project.yml` lists them; regenerate the project after editing it. Linker
+  warnings about CoreAudioTypes, UIUtilities or SwiftUICore are Xcode
+  simulator noise and can be ignored.
 - Settings → Debug → Core log shows what the Rust side did, including the
   iroh dial and the exact commands sent.
