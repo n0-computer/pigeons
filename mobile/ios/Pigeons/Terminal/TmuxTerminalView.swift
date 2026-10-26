@@ -19,6 +19,9 @@ final class TmuxTerminalView: TerminalView {
         didSet { onControlArmedChanged?(controlArmed) }
     }
     var onControlArmedChanged: ((Bool) -> Void)?
+    /// Fires with `true` when the view takes the keyboard and `false` when it
+    /// gives it up, so the key bar can show the right toggle.
+    var onKeyboardChanged: ((Bool) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -39,6 +42,18 @@ final class TmuxTerminalView: TerminalView {
         nativeForegroundColor = UIColor(white: 0.92, alpha: 1)
         backgroundColor = .black
         keyboardDismissMode = .interactive
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onKeyboardChanged?(true) }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { onKeyboardChanged?(false) }
+        return ok
     }
 
     override func insertText(_ text: String) {
