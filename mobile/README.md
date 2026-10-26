@@ -131,6 +131,11 @@ needs network for iroh discovery.
 - **New session** runs `work.sh <project> <tree>` in the PTY, so creating a
   worktree from a branch name, starting its session, and attaching all behave
   exactly as from a laptop. Worktrees that already have a session are marked.
+  For a branch that exists nowhere yet, the sheet offers the same "start
+  from" list the script does (local and origin branches, newest commit first,
+  origin's default branch preselected) and passes the pick as `BASE=`, so the
+  script skips that prompt. Anything the script still asks, such as which
+  agent to start, is answered in the terminal as usual.
 
 ## Files
 

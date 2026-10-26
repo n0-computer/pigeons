@@ -294,6 +294,21 @@ impl Client {
         })
     }
 
+    /// List the branches a new worktree of a project can start from. The
+    /// payload is a [`tmux::Branches`].
+    pub fn list_branches(&self, project: String) -> RequestId {
+        self.request(move |inner| async move {
+            let code_dir = inner.settings().code_dir;
+            let out = inner
+                .run(&tmux::branches_command(&code_dir, &project))
+                .await?;
+            if out.exit_code != Some(0) {
+                bail!("{}", out.stderr.trim());
+            }
+            Ok(serde_json::to_string(&tmux::parse_branches(&out.stdout))?)
+        })
+    }
+
     /// Kill a tmux session. The payload is an [`ExecOutput`] as JSON.
     pub fn kill_session(&self, session: String) -> RequestId {
         self.exec(tmux::kill_session_command(&session))
@@ -399,11 +414,24 @@ impl Client {
     }
 
     /// Open a terminal running `work.sh <project> <tree>`, which creates the
-    /// worktree and its session when needed and attaches.
-    pub fn open_worktree(&self, project: String, tree: String, cols: u16, rows: u16) -> TerminalId {
+    /// worktree and its session when needed and attaches. `base` is the
+    /// branch a new branch starts from; see [`tmux::work_command`].
+    pub fn open_worktree(
+        &self,
+        project: String,
+        tree: String,
+        base: Option<String>,
+        cols: u16,
+        rows: u16,
+    ) -> TerminalId {
         let work_script = self.settings().work_script;
         self.open_terminal(
-            Some(tmux::work_command(&work_script, &project, &tree)),
+            Some(tmux::work_command(
+                &work_script,
+                &project,
+                &tree,
+                base.as_deref(),
+            )),
             cols,
             rows,
         )

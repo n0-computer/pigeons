@@ -72,6 +72,22 @@ struct Worktree: Codable, Identifiable, Hashable {
     var id: String { path }
 }
 
+/// Branches a new worktree can start from, as `pm_client_list_branches`
+/// reports them: newest commit first, local and origin merged.
+struct Branches: Codable {
+    /// What `work.sh` picks when told nothing: origin's HEAD branch, else
+    /// `main` or `master`. Nil when the project has neither.
+    let defaultBranch: String?
+    let branches: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case defaultBranch = "default"
+        case branches
+    }
+
+    static let empty = Branches(defaultBranch: nil, branches: [])
+}
+
 /// Result of a command run on the roost.
 struct ExecResult: Codable {
     let exitCode: Int?

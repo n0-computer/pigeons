@@ -9,6 +9,8 @@ struct SessionListView: View {
     @State private var loading = false
     @State private var loadError: String?
     @State private var showNew = false
+    @State private var showNewMenu = false
+    @State private var pendingNew: NewChoice?
     @State private var showSettings = false
     @State private var killTarget: TmuxSession?
     @State private var path = NavigationPath()
@@ -51,19 +53,30 @@ struct SessionListView: View {
                         Image(systemName: "gearshape")
                     }
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        path.append(TerminalRoute.shell)
-                    } label: {
-                        Image(systemName: "terminal")
-                    }
-                    .disabled(client.state != .connected)
-                    Button {
-                        showNew = true
+                        showNewMenu = true
                     } label: {
                         Image(systemName: "plus")
                     }
                     .disabled(client.state != .connected)
+                    .popover(isPresented: $showNewMenu, arrowEdge: .top) {
+                        NewChoicePicker { choice in
+                            // Run it once the popover is gone; presenting the
+                            // sheet while it is still dismissing gets dropped.
+                            pendingNew = choice
+                            showNewMenu = false
+                        }
+                        .presentationCompactAdaptation(.popover)
+                    }
+                }
+            }
+            .onChange(of: showNewMenu) { _, shown in
+                guard !shown, let choice = pendingNew else { return }
+                pendingNew = nil
+                switch choice {
+                case .worktree: showNew = true
+                case .shell: path.append(TerminalRoute.shell)
                 }
             }
             .refreshable { await load() }
@@ -170,6 +183,71 @@ struct SessionListView: View {
             loadError = error.localizedDescription
         }
         await load()
+    }
+}
+
+/// What the + button offers.
+private enum NewChoice: CaseIterable, Identifiable {
+    case worktree
+    case shell
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .worktree: "Work session"
+        case .shell: "Shell"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .worktree: "Open or create a worktree with work.sh"
+        case .shell: "A plain login shell on the roost"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .worktree: "folder.badge.plus"
+        case .shell: "terminal"
+        }
+    }
+}
+
+/// The + popover: same shape as the terminal's pane switcher.
+private struct NewChoicePicker: View {
+    let choose: (NewChoice) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(NewChoice.allCases) { choice in
+                Button {
+                    choose(choice)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: choice.icon)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(choice.label)
+                            Text(choice.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+                if choice != NewChoice.allCases.last {
+                    Divider()
+                }
+            }
+        }
+        .frame(minWidth: 240)
+        .padding(.vertical, 4)
     }
 }
 

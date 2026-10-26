@@ -390,7 +390,6 @@ pub unsafe extern "C" fn pm_client_list_sessions(client: *mut pm_client) -> u64 
     unsafe { with(client, 0, |c| c.client.list_sessions()) }
 }
 
-/// List a project's worktrees. Payload: a JSON array of worktrees.
 /// Canonicalize a path on the roost (`~` allowed). Payload: `{"path":"..."}`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_client_resolve_path(
@@ -421,6 +420,7 @@ pub unsafe extern "C" fn pm_client_read_file(
     }
 }
 
+/// List a project's worktrees. Payload: a JSON array of worktrees.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_client_list_worktrees(
     client: *mut pm_client,
@@ -429,6 +429,20 @@ pub unsafe extern "C" fn pm_client_list_worktrees(
     unsafe {
         with_str(client, project, 0, |c, p| {
             c.client.list_worktrees(p.to_string())
+        })
+    }
+}
+
+/// List the branches a new worktree of a project can start from. Payload:
+/// `{"default":"main"|null,"branches":["..."]}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_client_list_branches(
+    client: *mut pm_client,
+    project: *const c_char,
+) -> u64 {
+    unsafe {
+        with_str(client, project, 0, |c, p| {
+            c.client.list_branches(p.to_string())
         })
     }
 }
@@ -476,20 +490,27 @@ pub unsafe extern "C" fn pm_client_attach_session(
     }
 }
 
-/// Open a terminal running `work.sh <project> <tree>`.
+/// Open a terminal running `work.sh <project> <tree>`. `base` (nullable) is
+/// the branch a brand-new branch starts from; the script asks in the
+/// terminal when it is null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_client_open_worktree(
     client: *mut pm_client,
     project: *const c_char,
     tree: *const c_char,
+    base: *const c_char,
     cols: u16,
     rows: u16,
 ) -> u64 {
     unsafe {
         with_str(client, project, 0, |c, p| match arg(tree, "tree") {
-            Ok(t) => c
-                .client
-                .open_worktree(p.to_string(), t.to_string(), cols, rows),
+            Ok(t) => c.client.open_worktree(
+                p.to_string(),
+                t.to_string(),
+                opt_arg(base).map(str::to_string),
+                cols,
+                rows,
+            ),
             Err(_) => 0,
         })
     }

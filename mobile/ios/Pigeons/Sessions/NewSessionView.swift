@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// `work.sh <project> <tree>` from the phone: pick a project, then an
-/// existing worktree, or type a branch name to create one.
+/// existing worktree, or type a branch name to create one. A brand-new
+/// branch starts from the base picked here (origin's default branch unless
+/// changed), handed to the script as `BASE` so it does not have to ask.
 struct NewSessionView: View {
     let overview: Overview
     let open: (TerminalRoute) -> Void
@@ -13,6 +15,21 @@ struct NewSessionView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var branch = ""
+    @State private var branches: Branches = .empty
+    @State private var branchesError: String?
+    @State private var base = ""
+
+    private var newBranch: String { branch.trimmingCharacters(in: .whitespaces) }
+
+    /// work.sh checks an existing branch out as it is; the base only matters
+    /// for a branch that is nowhere yet.
+    private var branchExists: Bool { branches.branches.contains(newBranch) }
+
+    /// What to hand work.sh as `BASE`: nil lets it ask in the terminal.
+    private var chosenBase: String? {
+        if branchExists || base.isEmpty { return nil }
+        return base
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,7 +50,7 @@ struct NewSessionView: View {
                     }
                     ForEach(worktrees) { tree in
                         Button {
-                            open(.worktree(project: project, tree: tree.name))
+                            open(.worktree(project: project, tree: tree.name, base: nil))
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -64,14 +81,38 @@ struct NewSessionView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.body.monospaced())
-                    Button("Create worktree and open") {
-                        open(.worktree(project: project, tree: branch.trimmingCharacters(in: .whitespaces)))
+                    if branchExists {
+                        LabeledContent("Start from") {
+                            Text("existing branch").foregroundStyle(.secondary)
+                        }
+                    } else if branches.branches.isEmpty {
+                        LabeledContent("Start from") {
+                            Text(branchesError == nil ? "asked in the terminal" : "asked in the terminal (branch list failed)")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Picker("Start from", selection: $base) {
+                            ForEach(branches.branches, id: \.self) { name in
+                                if name == branches.defaultBranch {
+                                    Text("\(name) (default)").tag(name)
+                                } else {
+                                    Text(name).tag(name)
+                                }
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .font(.body.monospaced())
                     }
-                    .disabled(project.isEmpty || branch.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Create worktree and open") {
+                        open(.worktree(project: project, tree: newBranch, base: chosenBase))
+                    }
+                    .disabled(project.isEmpty || newBranch.isEmpty)
                 } header: {
                     Text("New worktree")
                 } footer: {
-                    Text("work.sh checks the branch out from origin when it exists, and branches from the default branch when it does not.")
+                    Text(branchExists
+                         ? "\(newBranch) already exists; work.sh checks it out as it is."
+                         : "work.sh checks the branch out from origin when it exists there, and otherwise creates it from the branch picked above, preferring origin's copy.")
                 }
             }
             .navigationTitle("Open")
@@ -87,7 +128,9 @@ struct NewSessionView: View {
                 }
             }
             .task(id: project) {
-                await loadWorktrees()
+                async let trees: Void = loadWorktrees()
+                async let bases: Void = loadBranches()
+                _ = await (trees, bases)
             }
         }
     }
@@ -102,6 +145,20 @@ struct NewSessionView: View {
         } catch {
             worktrees = []
             self.error = error.localizedDescription
+        }
+    }
+
+    private func loadBranches() async {
+        guard !project.isEmpty else { return }
+        branches = .empty
+        base = ""
+        do {
+            branches = try await client.listBranches(project: project)
+            branchesError = nil
+            // Default to what work.sh would pick on its own; else the newest.
+            base = branches.defaultBranch ?? branches.branches.first ?? ""
+        } catch {
+            branchesError = error.localizedDescription
         }
     }
 }
