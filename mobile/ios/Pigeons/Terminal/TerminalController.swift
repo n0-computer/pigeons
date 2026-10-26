@@ -9,14 +9,16 @@ enum TerminalRoute: Hashable {
     /// Attach to an existing tmux session.
     case session(TmuxSession)
     /// `work.sh <project> <tree>`: create the worktree and session if needed, then attach.
-    case worktree(project: String, tree: String)
+    /// `tree` is a worktree directory name or a branch name; `base` is what a
+    /// brand-new branch starts from (nil: work.sh asks in the terminal).
+    case worktree(project: String, tree: String, base: String?)
     /// A plain login shell on the roost.
     case shell
 
     var title: String {
         switch self {
         case .session(let session): session.name
-        case .worktree(let project, let tree): "\(project)/\(tree)"
+        case .worktree(let project, let tree, _): "\(project)/\(tree)"
         case .shell: "shell"
         }
     }
@@ -25,7 +27,7 @@ enum TerminalRoute: Hashable {
     var sessionName: String? {
         switch self {
         case .session(let session): session.name
-        case .worktree(let project, let tree): "\(project)/\(tree)".replacingOccurrences(of: ".", with: "-").replacingOccurrences(of: ":", with: "-")
+        case .worktree(let project, let tree, _): TerminalRoute.sessionName(project: project, tree: tree)
         case .shell: nil
         }
     }
@@ -34,9 +36,23 @@ enum TerminalRoute: Hashable {
     func fileScope(codeDir: String) -> FileScope {
         switch self {
         case .session(let session): FileScope.forSession(session, codeDir: codeDir)
-        case .worktree(let project, let tree): FileScope.forWorktree(project: project, tree: tree, codeDir: codeDir)
+        case .worktree(let project, let tree, _):
+            FileScope.forWorktree(project: project, tree: TerminalRoute.treeDirectory(tree), codeDir: codeDir)
         case .shell: FileScope.home
         }
+    }
+
+    /// The directory work.sh gives a worktree: `feat/x` lives in `feat-x`.
+    static func treeDirectory(_ tree: String) -> String {
+        tree.replacingOccurrences(of: "/", with: "-")
+    }
+
+    /// The tmux session name work.sh gives a worktree (`.` and `:` are not
+    /// allowed in session names).
+    static func sessionName(project: String, tree: String) -> String {
+        "\(project)/\(treeDirectory(tree))"
+            .replacingOccurrences(of: ".", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
     }
 }
 
@@ -129,8 +145,8 @@ final class TerminalController: ObservableObject {
         switch route {
         case .session(let session):
             channel = client.attach(session: session.name, cols: cols, rows: rows)
-        case .worktree(let project, let tree):
-            channel = client.openWorktree(project: project, tree: tree, cols: cols, rows: rows)
+        case .worktree(let project, let tree, let base):
+            channel = client.openWorktree(project: project, tree: tree, base: base, cols: cols, rows: rows)
         case .shell:
             channel = client.openShell(cols: cols, rows: rows)
         }

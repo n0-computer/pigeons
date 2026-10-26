@@ -97,6 +97,12 @@ uint64_t pm_client_list_sessions(pm_client *client);
 /* Payload: [{"name","path","branch","session"}] */
 uint64_t pm_client_list_worktrees(pm_client *client, const char *project);
 
+/* Branches a new worktree can start from, newest commit first, local and
+ * origin merged. "default" is origin's HEAD branch (else main/master), null
+ * when the project has neither.
+ * Payload: {"default":"main"|null,"branches":["..."]} */
+uint64_t pm_client_list_branches(pm_client *client, const char *project);
+
 /* Files, over the SSH session's SFTP subsystem. Paths may start with "~".
  * resolve_path payload: {"path":"/abs/canonical"}
  * list_dir payload:     {"path":"/abs","entries":[{"name","kind":"dir|file|other",
@@ -115,7 +121,10 @@ uint64_t pm_client_exec(pm_client *client, const char *command);
 /* Terminals. Each returns a terminal id, or 0 on bad arguments. Output
  * arrives through on_terminal_output; on_terminal_exit fires once at the end. */
 uint64_t pm_client_attach_session(pm_client *client, const char *session, uint16_t cols, uint16_t rows);
-uint64_t pm_client_open_worktree(pm_client *client, const char *project, const char *tree, uint16_t cols, uint16_t rows);
+/* base (nullable) is the branch a brand-new branch starts from, passed to
+ * work.sh as BASE; the script asks in the terminal when it is null and
+ * ignores it when the branch already exists. */
+uint64_t pm_client_open_worktree(pm_client *client, const char *project, const char *tree, const char *base, uint16_t cols, uint16_t rows);
 uint64_t pm_client_open_shell(pm_client *client, uint16_t cols, uint16_t rows);
 
 void pm_terminal_write(pm_client *client, uint64_t terminal_id, const uint8_t *bytes, size_t len);

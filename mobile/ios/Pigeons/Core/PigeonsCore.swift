@@ -168,6 +168,10 @@ final class RoostClient: ObservableObject {
         try decode(await request { pm_client_list_worktrees($0, project) })
     }
 
+    func listBranches(project: String) async throws -> Branches {
+        try decode(await request { pm_client_list_branches($0, project) })
+    }
+
     func killSession(_ name: String) async throws -> ExecResult {
         try decode(await request { pm_client_kill_session($0, name) })
     }
@@ -200,8 +204,10 @@ final class RoostClient: ObservableObject {
         register(pm_client_attach_session(handle, session, clampDim(cols), clampDim(rows)))
     }
 
-    func openWorktree(project: String, tree: String, cols: Int, rows: Int) -> TerminalChannel {
-        register(pm_client_open_worktree(handle, project, tree, clampDim(cols), clampDim(rows)))
+    /// `base` is the branch a brand-new branch starts from; nil lets work.sh
+    /// ask in the terminal.
+    func openWorktree(project: String, tree: String, base: String?, cols: Int, rows: Int) -> TerminalChannel {
+        register(pm_client_open_worktree(handle, project, tree, base, clampDim(cols), clampDim(rows)))
     }
 
     func openShell(cols: Int, rows: Int) -> TerminalChannel {
