@@ -145,6 +145,12 @@ which is the point of tmux.
   interactive rc file. The wrapper appends `/opt/homebrew/bin` and
   `/usr/local/bin`; for other locations, set `PATH` in `~/.zprofile` (or
   `~/.profile`) on the roost.
+- *cannot find type `in6_ifreq` in crate `libc`* while building `netdev` for
+  iOS: netdev 0.46.x uses a macOS-only libc type. `core/Cargo.toml` patches
+  netdev to the upstream fix commit (still versioned 0.46.3, which netwatch
+  accepts); if the error reappears, make sure the `[patch.crates-io]` entry is
+  intact and run `cargo update -p netdev@0.46.3`. Drop the patch once iroh's
+  netwatch requires netdev 0.47 or later.
 - *Linker errors about `_res_9_*` or `_SCDynamicStore*`* when building the app:
   the Rust static library needs `libresolv` and SystemConfiguration, which
   `project.yml` links. Regenerate the project after editing it.
