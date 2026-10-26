@@ -27,11 +27,26 @@ for target in "${targets[@]}"; do
   (cd "$core" && cargo build "${cargo_flags[@]}" --target "$target")
 done
 
+# Ask cargo where it put the artifacts: CARGO_TARGET_DIR or a `build.target-dir`
+# in a cargo config moves them out of $core/target.
+target_dir="$(cd "$core" && cargo metadata --format-version 1 --no-deps \
+  | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+[[ -n "$target_dir" ]] || { echo "could not read target_directory from cargo metadata" >&2; exit 1; }
+
 lib=libpigeons_mobile.a
+libs=()
+for target in "${targets[@]}"; do
+  path="$target_dir/$target/$profile/$lib"
+  if [[ ! -f "$path" ]]; then
+    echo "missing $path" >&2
+    echo "cargo built into $target_dir; check CARGO_TARGET_DIR / build.target-dir" >&2
+    exit 1
+  fi
+  echo "    $(lipo -info "$path")"
+  libs+=(-library "$path" -headers "$core/include")
+done
+
 rm -rf "$out"
 echo "==> xcodebuild -create-xcframework"
-xcodebuild -create-xcframework \
-  -library "$core/target/aarch64-apple-ios/$profile/$lib" -headers "$core/include" \
-  -library "$core/target/aarch64-apple-ios-sim/$profile/$lib" -headers "$core/include" \
-  -output "$out"
+xcodebuild -create-xcframework "${libs[@]}" -output "$out"
 echo "built $out"
