@@ -1,0 +1,70 @@
+# XcodeGen spec. Generate the project with:
+#   PIGEONS_TEAM_ID=<your Apple team id> xcodegen generate
+# Build the Rust core first: ../scripts/build-core.sh
+name: Pigeons
+options:
+  bundleIdPrefix: computer.n0
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  xcodeVersion: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    DEVELOPMENT_TEAM: ${PIGEONS_TEAM_ID}
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: 1.99.1
+targets:
+  Pigeons:
+    type: application
+    platform: iOS
+    sources:
+      - path: Pigeons
+    dependencies:
+      - package: SwiftTerm
+      # Static library + headers + module map, built by ../scripts/build-core.sh.
+      - framework: PigeonsCore.xcframework
+        embed: false
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: CoreFoundation.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: computer.n0.pigeons
+        PRODUCT_NAME: Pigeons
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: "NO"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Rust's std on Apple platforms needs these at link time.
+        OTHER_LDFLAGS: ["-lresolv"]
+    info:
+      path: Pigeons/Info.plist
+      properties:
+        CFBundleDisplayName: Pigeons
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: false
+        NSLocalNetworkUsageDescription: Pigeons connects to your roost directly when both are on the same network.
+        NSBonjourServices:
+          - _iroh._udp
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false

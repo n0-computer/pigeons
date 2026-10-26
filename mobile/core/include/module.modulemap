@@ -1,0 +1,4 @@
+module PigeonsCore {
+    header "pigeons_mobile.h"
+    export *
+}
