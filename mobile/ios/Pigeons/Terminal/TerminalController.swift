@@ -44,6 +44,7 @@ final class TerminalController: ObservableObject {
 
     @Published private(set) var exit: TerminalExit?
     @Published private(set) var controlArmed = false
+    @Published private(set) var keyboardShown = false
     @Published private(set) var started = false
 
     private let client: RoostClient
@@ -61,6 +62,18 @@ final class TerminalController: ObservableObject {
     func attach(view: TmuxTerminalView) {
         self.view = view
         view.onControlArmedChanged = { [weak self] armed in self?.controlArmed = armed }
+        view.onKeyboardChanged = { [weak self] shown in self?.keyboardShown = shown }
+    }
+
+    /// Hide the keyboard to see more of the terminal, or bring it back.
+    /// Tapping the terminal also brings it back.
+    func toggleKeyboard() {
+        guard let view else { return }
+        if view.isFirstResponder {
+            _ = view.resignFirstResponder()
+        } else {
+            _ = view.becomeFirstResponder()
+        }
     }
 
     /// The view has a size. Open the PTY with it, or resize the one we have.
