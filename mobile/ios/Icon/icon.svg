@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e2747"/>
+      <stop offset="1" stop-color="#0a0e19"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(512 530) scale(1.28) translate(-500 -560)">
+    <!-- cursor block the bird perches on -->
+    <rect x="296" y="700" width="420" height="62" rx="10" fill="#f28c28"/>
+    <!-- legs -->
+    <g stroke="#f28c28" stroke-width="15" stroke-linecap="round" fill="none">
+      <line x1="470" y1="632" x2="456" y2="700"/>
+      <line x1="540" y1="634" x2="550" y2="700"/>
+    </g>
+    <!-- tail -->
+    <path d="M335 480 L205 560 L170 612 L330 540 Z" fill="#e9e4d8"/>
+    <!-- body -->
+    <ellipse cx="500" cy="520" rx="200" ry="135" transform="rotate(-12 500 520)" fill="#e9e4d8"/>
+    <!-- wing -->
+    <ellipse cx="465" cy="505" rx="135" ry="72" transform="rotate(-22 465 505)" fill="#cfc8b8"/>
+    <!-- neck + head -->
+    <ellipse cx="620" cy="430" rx="80" ry="95" transform="rotate(15 620 430)" fill="#e9e4d8"/>
+    <circle cx="650" cy="385" r="78" fill="#e9e4d8"/>
+    <!-- beak -->
+    <polygon points="718,378 792,398 718,412" fill="#f28c28"/>
+    <!-- eye -->
+    <circle cx="668" cy="372" r="12" fill="#0a0e19"/>
+    <circle cx="672" cy="368" r="4" fill="#ffffff"/>
+  </g>
+</svg>
