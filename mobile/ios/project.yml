@@ -35,6 +35,8 @@ targets:
         embed: false
       - sdk: Security.framework
       - sdk: SystemConfiguration.framework
+      # netdev's iOS path enumerates interfaces with Network.framework (nw_*).
+      - sdk: Network.framework
       - sdk: CoreFoundation.framework
     settings:
       base:
