@@ -18,6 +18,7 @@
 
 pub mod client;
 pub mod ffi;
+pub mod files;
 pub mod identity;
 pub mod logging;
 pub mod shell;

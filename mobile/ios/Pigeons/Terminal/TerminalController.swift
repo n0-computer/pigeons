@@ -7,7 +7,7 @@ import UIKit
 /// What a terminal screen opens.
 enum TerminalRoute: Hashable {
     /// Attach to an existing tmux session.
-    case session(String)
+    case session(TmuxSession)
     /// `work.sh <project> <tree>`: create the worktree and session if needed, then attach.
     case worktree(project: String, tree: String)
     /// A plain login shell on the roost.
@@ -15,7 +15,7 @@ enum TerminalRoute: Hashable {
 
     var title: String {
         switch self {
-        case .session(let name): name
+        case .session(let session): session.name
         case .worktree(let project, let tree): "\(project)/\(tree)"
         case .shell: "shell"
         }
@@ -24,9 +24,18 @@ enum TerminalRoute: Hashable {
     /// The tmux session a screen is (or will be) attached to, when known.
     var sessionName: String? {
         switch self {
-        case .session(let name): name
+        case .session(let session): session.name
         case .worktree(let project, let tree): "\(project)/\(tree)".replacingOccurrences(of: ".", with: "-").replacingOccurrences(of: ":", with: "-")
         case .shell: nil
+        }
+    }
+
+    /// Where the file browser for this terminal starts and stops.
+    func fileScope(codeDir: String) -> FileScope {
+        switch self {
+        case .session(let session): FileScope.forSession(session, codeDir: codeDir)
+        case .worktree(let project, let tree): FileScope.forWorktree(project: project, tree: tree, codeDir: codeDir)
+        case .shell: FileScope.home
         }
     }
 }
@@ -63,6 +72,12 @@ final class TerminalController: ObservableObject {
         self.view = view
         view.onControlArmedChanged = { [weak self] armed in self?.controlArmed = armed }
         view.onKeyboardChanged = { [weak self] shown in self?.keyboardShown = shown }
+    }
+
+    func hideKeyboard() {
+        if let view, view.isFirstResponder {
+            _ = view.resignFirstResponder()
+        }
     }
 
     /// Hide the keyboard to see more of the terminal, or bring it back.
@@ -112,8 +127,8 @@ final class TerminalController: ObservableObject {
         started = true
         let channel: TerminalChannel
         switch route {
-        case .session(let name):
-            channel = client.attach(session: name, cols: cols, rows: rows)
+        case .session(let session):
+            channel = client.attach(session: session.name, cols: cols, rows: rows)
         case .worktree(let project, let tree):
             channel = client.openWorktree(project: project, tree: tree, cols: cols, rows: rows)
         case .shell:
