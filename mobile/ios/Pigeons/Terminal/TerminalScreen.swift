@@ -1,29 +1,67 @@
 import SwiftUI
 
-/// The terminal, the key bar, and the ways out: detach, kill, close.
+/// What the screen shows: the live terminal, or the files around it.
+enum PaneMode: String, CaseIterable, Identifiable {
+    case terminal, files
+
+    var id: String { rawValue }
+    var label: String { self == .terminal ? "Terminal" : "Files" }
+    var icon: String { self == .terminal ? "terminal" : "folder" }
+}
+
+/// The terminal, the key bar, and the ways out: detach, kill, close. A
+/// title-bar toggle swaps the terminal for a file browser scoped to the
+/// session's directory; the terminal stays alive underneath.
 struct TerminalScreen: View {
     @StateObject private var controller: TerminalController
+    @StateObject private var files: FileBrowserModel
     @Environment(\.dismiss) private var dismiss
     @State private var confirmKill = false
     @State private var killError: String?
+    @State private var mode = PaneMode.terminal
+    @State private var showModePicker = false
 
     init(route: TerminalRoute, client: RoostClient, settings: AppSettings) {
         _controller = StateObject(wrappedValue: TerminalController(route: route, client: client, settings: settings))
+        _files = StateObject(wrappedValue: FileBrowserModel(scope: route.fileScope(codeDir: settings.codeDir), client: client))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TerminalContainer(controller: controller)
-                .background(Color.black)
-            TmuxKeyBar(controller: controller)
+        ZStack {
+            VStack(spacing: 0) {
+                TerminalContainer(controller: controller)
+                    .background(Color.black)
+                TmuxKeyBar(controller: controller)
+            }
+            .opacity(mode == .terminal ? 1 : 0)
+            .allowsHitTesting(mode == .terminal)
+            .accessibilityHidden(mode != .terminal)
+
+            if mode == .files {
+                FileBrowserView(model: files)
+                    .environment(\.colorScheme, .dark)
+            }
         }
         .background(Color.black.ignoresSafeArea())
         .navigationTitle(controller.route.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(white: 0.08), for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationDestination(for: FileRoute.self) { route in
+            FileViewerScreen(route: route)
+        }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showModePicker = true
+                } label: {
+                    Image(systemName: mode.icon)
+                }
+                .accessibilityLabel("Switch between terminal and files")
+                .popover(isPresented: $showModePicker, arrowEdge: .top) {
+                    PaneModePicker(mode: $mode) { showModePicker = false }
+                        .presentationCompactAdaptation(.popover)
+                }
                 Menu {
                     Button {
                         controller.detach()
@@ -80,6 +118,47 @@ struct TerminalScreen: View {
                 dismiss()
             }
         }
+        .onChange(of: mode) { _, mode in
+            if mode == .files {
+                controller.hideKeyboard()
+            }
+        }
+    }
+}
+
+/// The popover under the title-bar toggle.
+private struct PaneModePicker: View {
+    @Binding var mode: PaneMode
+    let done: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(PaneMode.allCases) { candidate in
+                Button {
+                    mode = candidate
+                    done()
+                } label: {
+                    HStack {
+                        Label(candidate.label, systemImage: candidate.icon)
+                        Spacer()
+                        if candidate == mode {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+                if candidate != PaneMode.allCases.last {
+                    Divider()
+                }
+            }
+        }
+        .frame(minWidth: 200)
+        .padding(.vertical, 4)
+        .preferredColorScheme(.dark)
     }
 }
 

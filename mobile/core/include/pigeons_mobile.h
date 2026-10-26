@@ -97,6 +97,15 @@ uint64_t pm_client_list_sessions(pm_client *client);
 /* Payload: [{"name","path","branch","session"}] */
 uint64_t pm_client_list_worktrees(pm_client *client, const char *project);
 
+/* Files, over the SSH session's SFTP subsystem. Paths may start with "~".
+ * resolve_path payload: {"path":"/abs/canonical"}
+ * list_dir payload:     {"path":"/abs","entries":[{"name","kind":"dir|file|other",
+ *                        "symlink":false,"size":0,"modified":null|seconds}]}
+ * read_file payload:    {"path","size","truncated":bool,"binary":bool,"text"} */
+uint64_t pm_client_resolve_path(pm_client *client, const char *path);
+uint64_t pm_client_list_dir(pm_client *client, const char *path);
+uint64_t pm_client_read_file(pm_client *client, const char *path, uint64_t max_bytes);
+
 /* Payload for these three: {"exit_code":0,"stdout":"","stderr":""}
  * (exit_code is null when unknown). */
 uint64_t pm_client_kill_session(pm_client *client, const char *session);

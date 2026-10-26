@@ -40,6 +40,8 @@ out of them, and open worktrees through `work.sh` itself.
   and the xcframework are generated, not committed.
   - `Pigeons/Core/PigeonsCore.swift` — `RoostClient`, the Swift face of the ABI.
   - `Pigeons/Terminal/` — SwiftTerm subclass, controller, key bar, screen.
+  - `Pigeons/Files/` — file browser and viewer behind the terminal's
+    title-bar toggle; Highlightr for code, a custom pass for markdown.
   - `Pigeons/Sessions/` — session list and the `work.sh` sheet.
   - `Pigeons/Settings/` — roost, user, paths, prefix, device key.
 - `scripts/build-core.sh` — Rust → `ios/PigeonsCore.xcframework`.
@@ -129,6 +131,28 @@ needs network for iroh discovery.
 - **New session** runs `work.sh <project> <tree>` in the PTY, so creating a
   worktree from a branch name, starting its session, and attaching all behave
   exactly as from a laptop. Worktrees that already have a session are marked.
+
+## Files
+
+Every terminal screen has a toggle in the title bar, left of the menu, that
+swaps the terminal for a file browser. The terminal keeps running underneath.
+
+- The browser starts in the tmux session's directory (`#{session_path}`), or
+  the worktree just created by `work.sh`, and can climb as far as the project
+  directory that holds the worktrees. A plain shell starts at home and can go
+  anywhere.
+- Listings and file contents come over the SSH session's SFTP subsystem, so
+  sshd needs `Subsystem sftp` enabled (it is by default on macOS and most
+  Linux distributions). The core opens one SFTP channel per connection, on
+  first use.
+- Files open in a dark, monospaced viewer. Rust, JavaScript, TypeScript, YAML,
+  TOML, JSON, Swift, shell, Python, Go and a few others are highlighted with
+  highlight.js through Highlightr. Markdown gets its own line-based pass that
+  keeps every glyph the same width: bold coloured headings, bold strong text,
+  coloured emphasis, code spans, links, list markers, and fenced blocks
+  highlighted in their language.
+- Reads stop at 1 MB and files with NUL bytes are reported as binary rather
+  than rendered.
 
 ## Background and reconnecting
 

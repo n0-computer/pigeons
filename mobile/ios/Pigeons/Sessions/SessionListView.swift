@@ -27,7 +27,7 @@ struct SessionListView: View {
                 ForEach(overview.groups) { group in
                     Section(group.project) {
                         ForEach(group.sessions) { session in
-                            NavigationLink(value: TerminalRoute.session(session.name)) {
+                            NavigationLink(value: TerminalRoute.session(session)) {
                                 SessionRow(session: session)
                             }
                             .swipeActions(edge: .trailing) {

@@ -180,6 +180,20 @@ final class RoostClient: ObservableObject {
         try decode(await request { pm_client_exec($0, command) })
     }
 
+    // MARK: Files
+
+    func resolvePath(_ path: String) async throws -> ResolvedPath {
+        try decode(await request { pm_client_resolve_path($0, path) })
+    }
+
+    func listDir(_ path: String) async throws -> DirListing {
+        try decode(await request { pm_client_list_dir($0, path) })
+    }
+
+    func readFile(_ path: String, maxBytes: UInt64) async throws -> FileContent {
+        try decode(await request { pm_client_read_file($0, path, maxBytes) })
+    }
+
     // MARK: Terminals
 
     func attach(session: String, cols: Int, rows: Int) -> TerminalChannel {

@@ -97,7 +97,7 @@ impl Sshd {
             "Port {port}\nListenAddress 127.0.0.1\nHostKey {d}/host_key\n\
              AuthorizedKeysFile {d}/authorized_keys\nPasswordAuthentication no\n\
              KbdInteractiveAuthentication no\nPubkeyAuthentication yes\nStrictModes no\n\
-             UsePAM no\nPidFile none\nLogLevel VERBOSE\n",
+             UsePAM no\nPidFile none\nLogLevel VERBOSE\nSubsystem sftp internal-sftp\n",
             d = dir.display()
         );
         std::fs::write(dir.join("sshd_config"), config).unwrap();
@@ -217,6 +217,88 @@ async fn mobile_client_reaches_sshd_through_a_roost() {
         v["sessions"].is_array() && v["projects"].is_array(),
         "{overview}"
     );
+
+    // Files over SFTP: the sshd's own directory has known contents.
+    let dir = sshd.dir.to_str().unwrap().to_string();
+    let id = client.list_dir(dir.clone());
+    let listing = wait_for(&mut rx, 30, "dir listing", |ev| match ev {
+        Ev::Result(r, res) if r == id => Some(res.expect("list_dir ok")),
+        _ => None,
+    })
+    .await;
+    let v: serde_json::Value = serde_json::from_str(&listing).unwrap();
+    let names: Vec<&str> = v["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"sshd_config"), "{listing}");
+    let cfg = v["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "sshd_config")
+        .unwrap();
+    assert_eq!(cfg["kind"], "file");
+    assert!(cfg["size"].as_u64().unwrap() > 0);
+
+    let id = client.read_file(format!("{dir}/sshd_config"), 1 << 20);
+    let content = wait_for(&mut rx, 30, "file content", |ev| match ev {
+        Ev::Result(r, res) if r == id => Some(res.expect("read_file ok")),
+        _ => None,
+    })
+    .await;
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(v["binary"], false);
+    assert_eq!(v["truncated"], false);
+    assert!(
+        v["text"].as_str().unwrap().contains("Subsystem sftp"),
+        "{content}"
+    );
+
+    let id = client.read_file(format!("{dir}/sshd_config"), 8);
+    let content = wait_for(&mut rx, 30, "truncated content", |ev| match ev {
+        Ev::Result(r, res) if r == id => Some(res.expect("read_file ok")),
+        _ => None,
+    })
+    .await;
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["text"].as_str().unwrap().len(), 8);
+
+    // A file with NUL bytes is reported as binary and its text left empty.
+    std::fs::write(sshd.dir.join("blob.bin"), b"\x00\x01\x02binary").unwrap();
+    let id = client.read_file(format!("{dir}/blob.bin"), 1 << 20);
+    let content = wait_for(&mut rx, 30, "binary content", |ev| match ev {
+        Ev::Result(r, res) if r == id => Some(res.expect("read_file ok")),
+        _ => None,
+    })
+    .await;
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(v["binary"], true);
+    assert_eq!(v["text"], "");
+
+    // `~` resolves to the login user's home.
+    let id = client.resolve_path("~".to_string());
+    let home = wait_for(&mut rx, 30, "home path", |ev| match ev {
+        Ev::Result(r, res) if r == id => Some(res.expect("resolve ok")),
+        _ => None,
+    })
+    .await;
+    let v: serde_json::Value = serde_json::from_str(&home).unwrap();
+    assert_eq!(v["path"], std::env::var("HOME").unwrap());
+
+    // A missing directory is an error, not a crash.
+    let id = client.list_dir(format!("{dir}/nope"));
+    wait_for(&mut rx, 30, "missing dir error", |ev| match ev {
+        Ev::Result(r, res) if r == id => {
+            assert!(res.is_err(), "{res:?}");
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
 
     // A PTY shell: type a command, see its output, exit cleanly.
     let term = client.open_shell(80, 24);

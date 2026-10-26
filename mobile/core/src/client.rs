@@ -30,10 +30,19 @@ use russh::{
     client::{self, DisconnectReason, Handle},
     keys::{PrivateKey, PrivateKeyWithHashAlg, ssh_key},
 };
+use russh_sftp::client::SftpSession;
 use serde::Serialize;
-use tokio::{io::AsyncWriteExt, runtime, sync::mpsc, time};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    runtime,
+    sync::mpsc,
+    time,
+};
 
-use crate::{identity, shell, tmux};
+use crate::{
+    files::{self, DirEntry, DirListing, EntryKind, FileContent},
+    identity, shell, tmux,
+};
 
 /// Identifies one asynchronous request; its outcome arrives in
 /// [`Events::result`] with the same id.
@@ -134,6 +143,10 @@ struct Inner {
     settings: Mutex<Settings>,
     state: Mutex<ConnectionState>,
     ssh: Mutex<Option<Arc<Handle<SshHandler>>>>,
+    /// Opened on first use, dropped with the SSH session.
+    sftp: Mutex<Option<Arc<SftpSession>>>,
+    /// Serialises SFTP session setup so concurrent first uses share one.
+    sftp_setup: tokio::sync::Mutex<()>,
     /// Bumped by every connect and disconnect, so a late failure from an
     /// abandoned connection cannot overwrite the state of the current one.
     generation: AtomicU64,
@@ -167,6 +180,8 @@ impl Client {
                 settings: Mutex::new(Settings::default()),
                 state: Mutex::new(ConnectionState::Disconnected),
                 ssh: Mutex::new(None),
+                sftp: Mutex::new(None),
+                sftp_setup: tokio::sync::Mutex::new(()),
                 generation: AtomicU64::new(0),
                 terminals: Mutex::new(HashMap::new()),
                 next_id: AtomicU64::new(1),
@@ -293,6 +308,90 @@ impl Client {
         }
     }
 
+    /// Make a path absolute and canonical, expanding a leading `~`. The
+    /// payload is `{"path": "..."}`.
+    pub fn resolve_path(&self, path: String) -> RequestId {
+        self.request(move |inner| async move {
+            let (sftp, path) = inner.sftp_path(&path).await?;
+            let path = sftp.canonicalize(path).await.context("resolving path")?;
+            Ok(serde_json::to_string(&serde_json::json!({ "path": path }))?)
+        })
+    }
+
+    /// List a directory. The payload is a [`DirListing`] as JSON.
+    pub fn list_dir(&self, path: String) -> RequestId {
+        self.request(move |inner| async move {
+            let (sftp, path) = inner.sftp_path(&path).await?;
+            let path = sftp
+                .canonicalize(path)
+                .await
+                .context("resolving directory")?;
+            let mut entries = Vec::new();
+            for entry in sftp.read_dir(&path).await.context("listing directory")? {
+                let name = entry.file_name();
+                let meta = entry.metadata();
+                let symlink = meta.file_type().is_symlink();
+                let (kind, size, modified) = if symlink {
+                    // Describe what the link points at; dangling links are "other".
+                    match sftp.metadata(format!("{path}/{name}")).await {
+                        Ok(target) => (
+                            kind_of(target.is_dir(), target.is_regular()),
+                            target.len(),
+                            unix_time(&target),
+                        ),
+                        Err(_) => (EntryKind::Other, 0, None),
+                    }
+                } else {
+                    (
+                        kind_of(meta.is_dir(), meta.is_regular()),
+                        meta.len(),
+                        unix_time(&meta),
+                    )
+                };
+                entries.push(DirEntry {
+                    name,
+                    kind,
+                    symlink,
+                    size,
+                    modified,
+                });
+            }
+            files::sort_entries(&mut entries);
+            tracing::debug!("listed {path}: {} entries", entries.len());
+            Ok(serde_json::to_string(&DirListing { path, entries })?)
+        })
+    }
+
+    /// Read up to `max_bytes` of a file. The payload is a [`FileContent`]
+    /// as JSON.
+    pub fn read_file(&self, path: String, max_bytes: u64) -> RequestId {
+        self.request(move |inner| async move {
+            let (sftp, path) = inner.sftp_path(&path).await?;
+            let path = sftp.canonicalize(path).await.context("resolving file")?;
+            let size = sftp.metadata(&path).await.context("stat")?.len();
+            let file = sftp.open(&path).await.context("opening file")?;
+            let mut bytes = Vec::with_capacity(size.min(max_bytes) as usize);
+            file.take(max_bytes)
+                .read_to_end(&mut bytes)
+                .await
+                .context("reading file")?;
+            let binary = files::is_binary(&bytes);
+            let truncated = size > bytes.len() as u64;
+            tracing::debug!("read {path}: {} of {size} bytes", bytes.len());
+            Ok(serde_json::to_string(&FileContent {
+                path,
+                size,
+                truncated,
+                binary,
+                text: if binary {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&bytes).into_owned()
+                },
+            })?)
+        })
+    }
+
     /// Open a terminal attached to a tmux session.
     pub fn attach_session(&self, session: String, cols: u16, rows: u16) -> TerminalId {
         let mouse = self.settings().tmux_mouse;
@@ -393,6 +492,48 @@ impl Inner {
         self.events.state(state, detail);
     }
 
+    /// The SFTP session for the current connection, opened on first use.
+    async fn sftp(&self) -> Result<Arc<SftpSession>> {
+        let _setup = self.sftp_setup.lock().await;
+        if let Some(sftp) = self.sftp.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            return Ok(sftp);
+        }
+        let handle = self.session()?;
+        let channel = handle
+            .channel_open_session()
+            .await
+            .context("opening sftp channel")?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .context("requesting the sftp subsystem (is it enabled in sshd_config?)")?;
+        let sftp = Arc::new(
+            SftpSession::new(channel.into_stream())
+                .await
+                .context("starting sftp")?,
+        );
+        tracing::debug!("sftp session opened");
+        *self.sftp.lock().unwrap_or_else(|e| e.into_inner()) = Some(sftp.clone());
+        Ok(sftp)
+    }
+
+    /// The SFTP session plus `path` with a leading `~` expanded to the
+    /// login user's home directory.
+    async fn sftp_path(&self, path: &str) -> Result<(Arc<SftpSession>, String)> {
+        let sftp = self.sftp().await?;
+        let path = if path == "~" || path.starts_with("~/") {
+            let home = sftp.canonicalize(".").await.context("finding home")?;
+            files::expand_home(path, &home)
+        } else {
+            path.to_string()
+        };
+        Ok((sftp, path))
+    }
+
+    fn drop_sftp(&self) {
+        self.sftp.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+
     fn session(&self) -> Result<Arc<Handle<SshHandler>>> {
         self.ssh
             .lock()
@@ -457,6 +598,7 @@ impl Inner {
             );
         }
 
+        self.drop_sftp();
         *self.ssh.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(handle));
         self.set_state(ConnectionState::Connected, None);
         Ok(())
@@ -467,6 +609,7 @@ impl Inner {
             return;
         }
         self.ssh.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.drop_sftp();
         for (_, tx) in self.terminals().drain() {
             let _ = tx.send(TermCmd::Close);
         }
@@ -475,6 +618,7 @@ impl Inner {
 
     async fn drop_session(&self) {
         let handle = self.ssh.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.drop_sftp();
         for (_, tx) in self.terminals().drain() {
             let _ = tx.send(TermCmd::Close);
         }
@@ -639,4 +783,18 @@ impl client::Handler for SshHandler {
             DisconnectReason::Error(e) => Err(e),
         }
     }
+}
+
+fn kind_of(is_dir: bool, is_regular: bool) -> EntryKind {
+    if is_dir {
+        EntryKind::Dir
+    } else if is_regular {
+        EntryKind::File
+    } else {
+        EntryKind::Other
+    }
+}
+
+fn unix_time(meta: &russh_sftp::client::fs::Metadata) -> Option<i64> {
+    meta.mtime.map(i64::from)
 }

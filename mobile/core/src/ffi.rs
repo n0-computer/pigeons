@@ -391,6 +391,36 @@ pub unsafe extern "C" fn pm_client_list_sessions(client: *mut pm_client) -> u64 
 }
 
 /// List a project's worktrees. Payload: a JSON array of worktrees.
+/// Canonicalize a path on the roost (`~` allowed). Payload: `{"path":"..."}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_client_resolve_path(
+    client: *mut pm_client,
+    path: *const c_char,
+) -> u64 {
+    unsafe { with_str(client, path, 0, |c, p| c.client.resolve_path(p.to_string())) }
+}
+
+/// List a directory on the roost. Payload: a `DirListing` as JSON.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_client_list_dir(client: *mut pm_client, path: *const c_char) -> u64 {
+    unsafe { with_str(client, path, 0, |c, p| c.client.list_dir(p.to_string())) }
+}
+
+/// Read up to `max_bytes` of a file on the roost. Payload: a `FileContent`
+/// as JSON.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_client_read_file(
+    client: *mut pm_client,
+    path: *const c_char,
+    max_bytes: u64,
+) -> u64 {
+    unsafe {
+        with_str(client, path, 0, |c, p| {
+            c.client.read_file(p.to_string(), max_bytes)
+        })
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_client_list_worktrees(
     client: *mut pm_client,
