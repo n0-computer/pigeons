@@ -28,7 +28,12 @@ serde_json = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-libc = "0.2"
+# Pinned: libc 0.2.190 moved the BSD routing-socket constants (RTM_*, RTAX_*,
+# RTA_IFP, RTF_*) behind `target_os = "macos"`, and netwatch (via iroh) still
+# uses them on every Apple target, so iOS builds fail with newer libc. This
+# pin holds the whole graph at 0.2.189. Lift once netwatch defines those
+# constants itself or gates its BSD route monitor for iOS.
+libc = "=0.2.189"
 
 [profile.release]
 opt-level = 3

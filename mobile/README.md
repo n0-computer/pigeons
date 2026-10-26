@@ -151,6 +151,11 @@ which is the point of tmux.
   accepts); if the error reappears, make sure the `[patch.crates-io]` entry is
   intact and run `cargo update -p netdev@0.46.3`. Drop the patch once iroh's
   netwatch requires netdev 0.47 or later.
+- *unresolved imports `libc::RTA_IFP`, `libc::RTAX_DST`, ... / cannot find
+  value `RTM_VERSION`* while building `netwatch` for iOS: libc 0.2.190 made
+  those constants macOS-only. `core/Cargo.toml` pins `libc = "=0.2.189"`; if
+  something pulls a newer libc in, run `cargo update -p libc --precise
+  0.2.189`. Lift the pin when netwatch no longer relies on them on iOS.
 - *Linker errors about `_res_9_*` or `_SCDynamicStore*`* when building the app:
   the Rust static library needs `libresolv` and SystemConfiguration, which
   `project.yml` links. Regenerate the project after editing it.
