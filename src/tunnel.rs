@@ -1,18 +1,20 @@
 use std::{
     env, panic,
     path::PathBuf,
+    pin::Pin,
     str::{self, FromStr},
+    task::{Context as TaskContext, Poll},
 };
 
 use anyhow::{Context, Result, anyhow};
 use iroh::{
     Endpoint, EndpointId, RelayMap, RelayUrl, SecretKey,
-    endpoint::{RelayMode, presets},
+    endpoint::{Connection, RecvStream, RelayMode, SendStream, presets},
     protocol::Router,
 };
 use iroh_services::ApiSecret;
 use tokio::{
-    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::{TcpListener, TcpStream},
 };
 use tracing::warn;
@@ -181,6 +183,29 @@ impl Tunnel {
         Ok(())
     }
 
+    /// Open a raw byte stream to the sshd behind a roost.
+    ///
+    /// This is the building block under [`Tunnel::fly`] and
+    /// [`Tunnel::fly_stdio`]: one iroh connection to `remote`, one
+    /// bidirectional QUIC stream on it, which the roost splices onto its local
+    /// SSH port. Embedders that run their own SSH client (the mobile app does)
+    /// hand the returned stream to it instead of going through a TCP listener
+    /// or stdio.
+    pub async fn open_stream(&self, remote: EndpointId) -> Result<RoostStream> {
+        tracing::debug!("open_stream: connecting to {remote}");
+        let conn = self
+            .endpoint()
+            .connect(remote, PigeonsProtocol::ALPN)
+            .await
+            .context("connecting to roost")?;
+        let (send, recv) = conn.open_bi().await.context("opening stream to roost")?;
+        Ok(RoostStream {
+            _conn: conn,
+            send,
+            recv,
+        })
+    }
+
     pub async fn close(&self) -> Result<()> {
         self.router.shutdown().await.context("shutting down router")
     }
@@ -204,6 +229,48 @@ impl Tunnel {
 
     pub fn endpoint(&self) -> &Endpoint {
         self.router.endpoint()
+    }
+}
+
+/// A bidirectional byte stream to the sshd behind a roost, from
+/// [`Tunnel::open_stream`].
+///
+/// Implements [`AsyncRead`] and [`AsyncWrite`] so it can be handed to any
+/// async SSH client as its transport. Reads come from the roost, writes go to
+/// it. The connection handle is kept alongside the stream halves so the QUIC
+/// connection cannot be implicitly closed while the stream is in use.
+#[derive(Debug)]
+pub struct RoostStream {
+    _conn: Connection,
+    send: SendStream,
+    recv: RecvStream,
+}
+
+impl AsyncRead for RoostStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        AsyncRead::poll_read(Pin::new(&mut self.recv), cx, buf)
+    }
+}
+
+impl AsyncWrite for RoostStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        AsyncWrite::poll_write(Pin::new(&mut self.send), cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        AsyncWrite::poll_flush(Pin::new(&mut self.send), cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        AsyncWrite::poll_shutdown(Pin::new(&mut self.send), cx)
     }
 }
 
