@@ -62,21 +62,14 @@ struct SessionListView: View {
                     .disabled(client.state != .connected)
                     .popover(isPresented: $showNewMenu, arrowEdge: .top) {
                         NewChoicePicker { choice in
-                            // Run it once the popover is gone; presenting the
-                            // sheet while it is still dismissing gets dropped.
                             pendingNew = choice
                             showNewMenu = false
                         }
                         .presentationCompactAdaptation(.popover)
+                        // Presenting the sheet while the popover is still
+                        // dismissing gets dropped, so act once it has gone.
+                        .onDisappear(perform: runPendingNew)
                     }
-                }
-            }
-            .onChange(of: showNewMenu) { _, shown in
-                guard !shown, let choice = pendingNew else { return }
-                pendingNew = nil
-                switch choice {
-                case .worktree: showNew = true
-                case .shell: path.append(TerminalRoute.shell)
                 }
             }
             .refreshable { await load() }
@@ -158,6 +151,15 @@ struct SessionListView: View {
         case .dialing, .authenticating: .yellow
         case .failed: .red
         case .disconnected: .gray
+        }
+    }
+
+    private func runPendingNew() {
+        guard let choice = pendingNew else { return }
+        pendingNew = nil
+        switch choice {
+        case .worktree: showNew = true
+        case .shell: path.append(TerminalRoute.shell)
         }
     }
 
