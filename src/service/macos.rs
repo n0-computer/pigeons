@@ -1,7 +1,6 @@
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::process::{Command, Stdio};
+
+use tempfile::TempPath;
 
 use crate::{Service, ServiceParams, service::service_relay_args};
 
@@ -72,7 +71,7 @@ impl MacosService {
     const INSTALL_SH_BYTES: &str = include_str!("../../service/install_macos.sh");
     const UNINSTALL_SH_BYTES: &str = include_str!("../../service/uninstall_macos.sh");
 
-    fn init_install_script(service_params: ServiceParams) -> anyhow::Result<PathBuf> {
+    fn init_install_script(service_params: ServiceParams) -> anyhow::Result<TempPath> {
         use std::io::Write as _;
 
         let relay_args = service_relay_args(&service_params.relay_url);
@@ -94,13 +93,12 @@ impl MacosService {
                 )
                 .as_bytes(),
         )?;
-        let sh_path = temp_sh.path().to_path_buf();
-        temp_sh.keep()?;
-
-        Ok(sh_path)
+        // The file is deleted when the returned path is dropped, after the
+        // script has run.
+        Ok(temp_sh.into_temp_path())
     }
 
-    fn init_uninstall_script() -> anyhow::Result<PathBuf> {
+    fn init_uninstall_script() -> anyhow::Result<TempPath> {
         use std::io::Write as _;
 
         let mut temp_sh = tempfile::Builder::new()
@@ -108,9 +106,8 @@ impl MacosService {
             .suffix(".sh")
             .tempfile_in("/tmp")?;
         temp_sh.write_all(Self::UNINSTALL_SH_BYTES.as_bytes())?;
-        let sh_path = temp_sh.path().to_path_buf();
-        temp_sh.keep()?;
-
-        Ok(sh_path)
+        // The file is deleted when the returned path is dropped, after the
+        // script has run.
+        Ok(temp_sh.into_temp_path())
     }
 }
