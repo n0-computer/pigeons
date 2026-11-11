@@ -3,7 +3,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use crate::{Service, ServiceParams};
+use crate::{Service, ServiceParams, service::service_relay_args};
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
@@ -75,10 +75,7 @@ impl LinuxService {
     fn init_install_script(service_params: ServiceParams) -> anyhow::Result<PathBuf> {
         use std::io::Write as _;
 
-        let mut relay_args = String::new();
-        for url in &service_params.relay_url {
-            relay_args.push_str(&format!(" --relay-url {url}"));
-        }
+        let relay_args = service_relay_args(&service_params.relay_url);
 
         let mut temp_sh = tempfile::Builder::new()
             .prefix("pigeons_install-")

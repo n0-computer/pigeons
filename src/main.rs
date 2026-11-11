@@ -10,6 +10,7 @@ use iroh_pigeons::{
     Config, RoostConfig, ServiceParams, Tunnel, add_tunnel_host, home_ssh_dir, install_service,
     list_tunnel_hosts, publish_telemetry_choice_for_service, remove_tunnel_host,
     resolve_binary_path, restart_service, service_endpoint_id, service_log, uninstall_service,
+    validate_relay_urls,
 };
 use tokio::{
     fs,
@@ -406,9 +407,11 @@ async fn main() -> anyhow::Result<()> {
                     ssh_port,
                     relay_url,
                 } => {
-                    // Resolve and validate the binary path *before* elevating,
-                    // so the user sees any error in their own terminal.
+                    // Resolve and validate the binary path and relay URLs
+                    // *before* elevating, so the user sees any error in their
+                    // own terminal.
                     let binary_path = resolve_binary_path()?;
+                    validate_relay_urls(&relay_url)?;
 
                     if !self_runas::is_elevated() {
                         self_runas::admin()?;

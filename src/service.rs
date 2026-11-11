@@ -3,8 +3,11 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     process::Command,
+    str::FromStr,
 };
 
+use anyhow::{anyhow, bail};
+use iroh::RelayUrl;
 use tokio::fs;
 
 #[cfg(target_os = "linux")]
@@ -81,7 +84,45 @@ pub trait Service {
     fn restart() -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
+/// Checks that relay URLs are valid and can be embedded in a service definition.
+///
+/// The Linux and macOS install scripts put the URLs in double quotes into a
+/// `bash -c` command line inside a systemd unit or a launchd plist. Only
+/// characters that need no escaping in any of these layers are allowed.
+///
+/// # Errors
+///
+/// Returns an error for the first URL that does not parse or that contains a
+/// character outside the allowed set.
+pub fn validate_relay_urls(urls: &[String]) -> anyhow::Result<()> {
+    for url in urls {
+        RelayUrl::from_str(url).map_err(|err| anyhow!("invalid relay URL '{url}': {err}"))?;
+        if let Some(c) = url.chars().find(|c| !is_service_safe_url_char(*c)) {
+            bail!("relay URL '{url}' contains '{c}', which a service definition cannot hold");
+        }
+    }
+    Ok(())
+}
+
+/// Returns true for URL characters that need no escaping in double quotes, systemd or XML.
+fn is_service_safe_url_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "-._~:/?#[]@!*+,=".contains(c)
+}
+
+/// Formats relay URLs as `--relay-url` arguments for a `bash -c` command line.
+///
+/// Each URL is put in double quotes, so the shell takes characters such as `?`
+/// and `*` literally. The URLs must have passed [`validate_relay_urls`], which
+/// rejects the characters that double quotes do not protect.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn service_relay_args(urls: &[String]) -> String {
+    urls.iter()
+        .map(|url| format!(" --relay-url \"{url}\""))
+        .collect()
+}
+
 pub async fn install(service_params: ServiceParams) -> anyhow::Result<()> {
+    validate_relay_urls(&service_params.relay_url)?;
     tracing::info!(
         "installing service for os={}, ssh_port={}",
         env::consts::OS,
@@ -168,5 +209,73 @@ pub fn service_log() -> anyhow::Result<()> {
             Ok(())
         }
         other => anyhow::bail!("service log is not supported on {other}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    fn validate(url: &str) -> anyhow::Result<()> {
+        validate_relay_urls(&[url.to_string()])
+    }
+
+    #[test]
+    fn validate_relay_urls_accepts_relay_urls() {
+        validate("https://ee92s2vncvnx9k0vd.euc1.relay.iroh-svc.com/").unwrap();
+        validate("https://relay.example.com:8443/path?x=1").unwrap();
+    }
+
+    #[test]
+    fn validate_relay_urls_rejects_invalid_urls() {
+        let err = validate("not a url").unwrap_err().to_string();
+
+        assert!(err.contains("invalid relay URL"), "got: {err}");
+    }
+
+    /// Checks that characters which would break a service definition are rejected.
+    ///
+    /// A quote or an ampersand would break the unit or the plist. A semicolon
+    /// would end the `bash -c` command and start another one.
+    #[test]
+    fn validate_relay_urls_rejects_characters_the_service_cannot_hold() {
+        for url in [
+            "https://relay.example.com/?a='b",
+            "https://relay.example.com/?a=1&b=2",
+            "https://relay.example.com/%41",
+            "https://relay.example.com/$HOME",
+            "https://relay.example.com/a;reboot",
+        ] {
+            let err = validate(url).unwrap_err().to_string();
+            assert!(err.contains("service definition"), "{url}: {err}");
+        }
+    }
+
+    /// Checks that relay URLs reach the roost unchanged through `bash -c`.
+    ///
+    /// The working directory holds a file that the URL matches as a glob pattern.
+    /// Unquoted, bash would replace the URL with the file name.
+    #[cfg(unix)]
+    #[test]
+    fn service_relay_args_survive_the_shell() {
+        let urls = vec!["https://relay.example.com/*".to_string()];
+        validate_relay_urls(&urls).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("https:/relay.example.com")).unwrap();
+        fs::write(dir.path().join("https:/relay.example.com/file"), "").unwrap();
+
+        let output = Command::new("bash")
+            .arg("-c")
+            .arg(format!("printf '%s\\n'{}", service_relay_args(&urls)))
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "--relay-url\nhttps://relay.example.com/*\n"
+        );
     }
 }
