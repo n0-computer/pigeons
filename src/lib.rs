@@ -6,9 +6,9 @@ mod tunnel;
 
 pub use config::{Config, publish_telemetry_choice_for_service};
 pub use service::{
-    Service, ServiceParams, install as install_service, resolve_binary_path,
-    restart as restart_service, service_endpoint_id, service_log, uninstall as uninstall_service,
-    validate_relay_urls,
+    Service, ServiceParams, ServiceRunState, install as install_service, resolve_binary_path,
+    restart as restart_service, service_endpoint_id, service_log, service_run_state,
+    uninstall as uninstall_service, validate_relay_urls,
 };
 pub use ssh::{
     SshConfigPigeonEntry, add_tunnel_host, dot_ssh_secret_key, home_ssh_dir, list_tunnel_hosts,

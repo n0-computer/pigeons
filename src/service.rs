@@ -163,6 +163,76 @@ pub async fn restart() -> anyhow::Result<()> {
     }
 }
 
+/// The run state of the pigeons service, as reported by the service manager.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceRunState {
+    /// The service is running.
+    Running,
+    /// The service is installed but not running.
+    NotRunning,
+    /// The service manager does not know the service.
+    NotInstalled,
+    /// The service manager could not be asked, or its answer was not understood.
+    Unknown,
+}
+
+/// Asks the platform's service manager whether the pigeons service is running.
+pub fn service_run_state() -> ServiceRunState {
+    let output = match env::consts::OS {
+        "linux" => Command::new("systemctl")
+            .args([
+                "show",
+                "--property=LoadState,ActiveState",
+                "pigeons.service",
+            ])
+            .output(),
+        "macos" => Command::new("launchctl")
+            .args(["print", "system/computer.pigeons.daemon"])
+            .output(),
+        "windows" => Command::new("sc").args(["query", "pigeons"]).output(),
+        _ => return ServiceRunState::Unknown,
+    };
+    match output {
+        Ok(output) => parse_run_state(
+            env::consts::OS,
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(err) => {
+            tracing::debug!("failed to query the service manager: {err}");
+            ServiceRunState::Unknown
+        }
+    }
+}
+
+/// Reads the run state from the output of the service manager query for `os`.
+fn parse_run_state(os: &str, stdout: &str, stderr: &str) -> ServiceRunState {
+    match os {
+        "linux" => {
+            // `systemctl show` prints one `Name=value` line per property.
+            let property = |name: &str| {
+                stdout
+                    .lines()
+                    .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+            };
+            match (property("LoadState"), property("ActiveState")) {
+                (_, Some("active" | "reloading")) => ServiceRunState::Running,
+                (Some("not-found"), _) => ServiceRunState::NotInstalled,
+                (Some(_), Some(_)) => ServiceRunState::NotRunning,
+                _ => ServiceRunState::Unknown,
+            }
+        }
+        "macos" if stdout.contains("state = running") => ServiceRunState::Running,
+        "macos" if stdout.contains("state = ") => ServiceRunState::NotRunning,
+        "macos" if stderr.contains("Could not find service") => ServiceRunState::NotInstalled,
+        "windows" if stdout.contains("RUNNING") => ServiceRunState::Running,
+        "windows" if stdout.contains("STATE") => ServiceRunState::NotRunning,
+        // Error 1060: the service does not exist.
+        "windows" if stdout.contains("1060") => ServiceRunState::NotInstalled,
+        _ => ServiceRunState::Unknown,
+    }
+}
+
 /// Try to read the endpoint ID of the installed pigeons service.
 /// The roost writes the endpoint ID string to /etc/pigeons/endpoint_id
 /// on startup when running as root (service mode).
@@ -220,6 +290,73 @@ mod tests {
 
     fn validate(url: &str) -> anyhow::Result<()> {
         validate_relay_urls(&[url.to_string()])
+    }
+
+    #[test]
+    fn parse_run_state_reads_systemctl() {
+        let state = |load, active| {
+            parse_run_state(
+                "linux",
+                &format!("LoadState={load}\nActiveState={active}\n"),
+                "",
+            )
+        };
+
+        assert_eq!(state("loaded", "active"), ServiceRunState::Running);
+        assert_eq!(state("loaded", "inactive"), ServiceRunState::NotRunning);
+        assert_eq!(state("loaded", "failed"), ServiceRunState::NotRunning);
+        assert_eq!(
+            state("not-found", "inactive"),
+            ServiceRunState::NotInstalled
+        );
+        assert_eq!(
+            parse_run_state("linux", "", "Failed to connect to bus"),
+            ServiceRunState::Unknown
+        );
+    }
+
+    #[test]
+    fn parse_run_state_reads_launchctl() {
+        let running = "system/computer.pigeons.daemon = {\n\tstate = running\n}";
+        let stopped = "system/computer.pigeons.daemon = {\n\tstate = not running\n}";
+        let missing = "Could not find service \"computer.pigeons.daemon\" in domain for system";
+
+        assert_eq!(
+            parse_run_state("macos", running, ""),
+            ServiceRunState::Running
+        );
+        assert_eq!(
+            parse_run_state("macos", stopped, ""),
+            ServiceRunState::NotRunning
+        );
+        assert_eq!(
+            parse_run_state("macos", "", missing),
+            ServiceRunState::NotInstalled
+        );
+        assert_eq!(
+            parse_run_state("macos", "", "permission denied"),
+            ServiceRunState::Unknown
+        );
+    }
+
+    #[test]
+    fn parse_run_state_reads_sc_query() {
+        let running = "SERVICE_NAME: pigeons\n        STATE              : 4  RUNNING\n";
+        let stopped = "SERVICE_NAME: pigeons\n        STATE              : 1  STOPPED\n";
+        let missing = "[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\n";
+
+        assert_eq!(
+            parse_run_state("windows", running, ""),
+            ServiceRunState::Running
+        );
+        assert_eq!(
+            parse_run_state("windows", stopped, ""),
+            ServiceRunState::NotRunning
+        );
+        assert_eq!(
+            parse_run_state("windows", missing, ""),
+            ServiceRunState::NotInstalled
+        );
     }
 
     #[test]
