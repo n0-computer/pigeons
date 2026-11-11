@@ -1,5 +1,6 @@
 use std::{
-    fmt,
+    fmt, fs as std_fs,
+    io::{self, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -7,7 +8,7 @@ use anyhow::{Context, bail};
 use ed25519_dalek::SECRET_KEY_LENGTH;
 use homedir::my_home;
 use iroh::{PublicKey, SecretKey};
-use tokio::{fs, net::TcpStream};
+use tokio::{fs, net::TcpStream, task};
 
 pub fn home_ssh_dir() -> anyhow::Result<PathBuf> {
     let distro_home = my_home()?.ok_or_else(|| anyhow::anyhow!("home directory not found"))?;
@@ -369,15 +370,63 @@ fn remove_host_block(content: &str, name: &str) -> anyhow::Result<String> {
     Ok(result)
 }
 
-async fn atomic_write(path: &PathBuf, content: &str) -> anyhow::Result<()> {
-    let dir = path.parent().unwrap();
-    let temp_path = dir.join(".config.pigeons.tmp");
-    fs::write(&temp_path, content)
+/// Replaces the content of the file at `path` atomically.
+///
+/// If `path` is a symlink, the file it points to is replaced and the link
+/// stays in place, so configs managed by dotfile tools keep working. The new
+/// file keeps the permissions of the file it replaces. A new file is readable
+/// only by its owner.
+///
+/// # Errors
+///
+/// Returns an error if `path` is a symlink to a file that does not exist, or
+/// if the file cannot be written.
+async fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
+    let path = path.to_path_buf();
+    let content = content.to_owned();
+    task::spawn_blocking(move || atomic_write_blocking(&path, &content))
         .await
-        .with_context(|| format!("failed to write {}", temp_path.display()))?;
-    fs::rename(&temp_path, path)
-        .await
-        .with_context(|| format!("failed to rename temp file to {}", path.display()))?;
+        .context("ssh config write task panicked")?
+}
+
+fn atomic_write_blocking(path: &Path, content: &str) -> anyhow::Result<()> {
+    let target = match std_fs::canonicalize(path) {
+        Ok(target) => target,
+        // Writing through the link would create a file at a place the user
+        // may not expect, and replacing the link would lose it.
+        Err(err) if err.kind() == io::ErrorKind::NotFound && path.is_symlink() => {
+            let link_target = std_fs::read_link(path)
+                .with_context(|| format!("failed to read the symlink {}", path.display()))?;
+            bail!(
+                "{} is a symlink to {}, which does not exist",
+                path.display(),
+                link_target.display()
+            );
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to resolve {}", path.display()));
+        }
+    };
+    let dir = target
+        .parent()
+        .with_context(|| format!("{} has no parent directory", target.display()))?;
+
+    // A unique name, so concurrent runs do not write to the same temp file.
+    let mut temp = tempfile::Builder::new()
+        .prefix(".config.pigeons.")
+        .tempfile_in(dir)
+        .with_context(|| format!("failed to create a temp file in {}", dir.display()))?;
+    temp.write_all(content.as_bytes())
+        .and_then(|()| match std_fs::metadata(&target) {
+            Ok(metadata) => temp.as_file().set_permissions(metadata.permissions()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        })
+        .and_then(|()| temp.as_file().sync_all())
+        .with_context(|| format!("failed to write {}", temp.path().display()))?;
+    temp.persist(&target)
+        .with_context(|| format!("failed to replace {}", target.display()))?;
     Ok(())
 }
 
@@ -397,6 +446,11 @@ pub(crate) async fn ensure_local_ssh_server_exists(ssh_port: u16) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use std::fs::{read_to_string, remove_file, write};
+    #[cfg(unix)]
+    use std::{
+        fs::{Permissions, metadata, set_permissions},
+        os::unix::fs::{PermissionsExt as _, symlink},
+    };
 
     use super::*;
 
@@ -480,8 +534,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn generated_key_is_owner_readable_only() {
-        use std::{fs::metadata, os::unix::fs::PermissionsExt as _};
-
         let dir = tempfile::tempdir().unwrap();
         dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
 
@@ -490,6 +542,66 @@ mod tests {
             .permissions()
             .mode();
 
+        assert_eq!(mode & 0o777, 0o600, "got mode {:o}", mode & 0o777);
+    }
+
+    /// Checks that writing through a symlinked config keeps the symlink.
+    ///
+    /// The config was replaced by renaming a temp file over it, which turned a
+    /// symlink into a plain file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_keeps_a_symlinked_config_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles-ssh-config");
+        let link = dir.path().join("config");
+        write(&real, "Host old\n").unwrap();
+        symlink(&real, &link).unwrap();
+
+        atomic_write(&link, "Host new\n").await.unwrap();
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(read_to_string(&real).unwrap(), "Host new\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_rejects_a_broken_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("config");
+        symlink(dir.path().join("missing"), &link).unwrap();
+
+        let err = atomic_write(&link, "Host new\n").await.unwrap_err();
+
+        assert!(err.to_string().contains("does not exist"), "got: {err}");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(!dir.path().join("missing").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_keeps_the_file_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        write(&path, "Host old\n").unwrap();
+        set_permissions(&path, Permissions::from_mode(0o640)).unwrap();
+
+        atomic_write(&path, "Host new\n").await.unwrap();
+
+        let mode = metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640, "got mode {:o}", mode & 0o777);
+        assert_eq!(read_to_string(&path).unwrap(), "Host new\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_creates_a_new_file_readable_by_its_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+
+        atomic_write(&path, "Host new\n").await.unwrap();
+
+        let mode = metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "got mode {:o}", mode & 0o777);
     }
 
