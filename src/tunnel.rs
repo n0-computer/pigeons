@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use iroh::{
     Endpoint, EndpointId, RelayMap, RelayUrl, SecretKey,
+    address_lookup::{DnsAddressLookup, PkarrResolver},
     endpoint::{Connection, RecvStream, RelayMode, SendStream, presets},
     protocol::Router,
 };
@@ -86,9 +87,19 @@ impl TunnelBuilder {
             self.relay_urls.iter().cloned().collect()
         };
 
-        let builder = Endpoint::builder(presets::N0)
-            .secret_key(self.secret_key.clone())
-            .relay_mode(RelayMode::Custom(relay_map));
+        let builder = if self.roost.is_some() {
+            // Clients find a roost by its endpoint ID, so a roost publishes its
+            // addresses.
+            Endpoint::builder(presets::N0)
+        } else {
+            // A flying pigeon only dials out, and its ID is thrown away on exit.
+            // It resolves the roost's addresses but publishes none of its own.
+            Endpoint::builder(presets::Minimal)
+                .address_lookup(PkarrResolver::n0_dns())
+                .address_lookup(DnsAddressLookup::n0_dns())
+        }
+        .secret_key(self.secret_key.clone())
+        .relay_mode(RelayMode::Custom(relay_map));
 
         let endpoint = builder.bind().await?;
         tracing::info!("endpoint bound, id={}", endpoint.id());
