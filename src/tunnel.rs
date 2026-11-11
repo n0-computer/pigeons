@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use iroh::{
     Endpoint, EndpointId, RelayMap, RelayUrl, SecretKey,
-    endpoint::{RelayMode, presets},
+    endpoint::{Connection, RecvStream, RelayMode, SendStream, presets},
     protocol::Router,
 };
 use iroh_services::ApiSecret;
@@ -15,7 +15,7 @@ use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     config::Config,
@@ -163,22 +163,8 @@ impl Tunnel {
             .endpoint()
             .connect(remote, PigeonsProtocol::ALPN)
             .await?;
-        tracing::debug!("fly_stdio: connected, opening bidirectional stream");
-        let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
-        tracing::debug!("fly_stdio: bridging stdin/stdout");
-
-        let mut stdin = io::stdin();
-        let mut stdout = io::stdout();
-
-        let stdin_to_iroh = copy_flush(&mut stdin, &mut iroh_send);
-        let iroh_to_stdout = copy_flush(&mut iroh_recv, &mut stdout);
-
-        tokio::select! {
-            result = stdin_to_iroh => { result?; }
-            result = iroh_to_stdout => { result?; }
-        }
-
-        Ok(())
+        tracing::debug!("fly_stdio: connected, bridging stdin/stdout");
+        fly_session(&conn, &mut io::stdin(), &mut io::stdout()).await
     }
 
     pub async fn close(&self) -> Result<()> {
@@ -240,30 +226,76 @@ async fn bridge_connection(
     tcp_stream.set_nodelay(true)?;
     tracing::debug!("bridge_connection: connecting to {remote_id}");
     let conn = endpoint.connect(remote_id, PigeonsProtocol::ALPN).await?;
-    tracing::debug!("bridge_connection: connected, opening bi stream");
-    let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
+    tracing::debug!("bridge_connection: connected, bridging the TCP stream");
     let (mut tcp_read, mut tcp_write) = tcp_stream.into_split();
+    fly_session(&conn, &mut tcp_read, &mut tcp_write).await
+}
 
-    let tcp_to_iroh = copy_flush(&mut tcp_read, &mut iroh_send);
-    let iroh_to_tcp = copy_flush(&mut iroh_recv, &mut tcp_write);
-
-    tokio::select! {
-        result = tcp_to_iroh => {
-            let _ = result;
-        }
-        result = iroh_to_tcp => {
-            let _ = result;
-        }
+/// Runs one ssh session from a local byte stream to the roost over `conn`.
+///
+/// Opens a stream pair and bridges it with the local stream. After the bridge
+/// ends cleanly, waits until the roost has acknowledged all data, then closes
+/// `conn`. Closing earlier would discard data still in flight. A dead roost
+/// ends the wait through the connection's idle timeout.
+pub(crate) async fn fly_session<R, W>(
+    conn: &Connection,
+    local_read: &mut R,
+    local_write: &mut W,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
+    let result = bridge_streams(local_read, local_write, &mut iroh_send, &mut iroh_recv).await;
+    // After a reset there is nothing left to deliver. Also, noq does not wake
+    // `stopped()` when the peer acknowledges a reset, so the wait would hang.
+    if result.is_ok()
+        && let Err(err) = iroh_send.stopped().await
+    {
+        debug!("send stream ended before delivery was confirmed: {err}");
     }
+    conn.close(0u32.into(), b"done");
+    Ok(result?)
+}
 
-    Ok(())
+/// Copies data between a local byte stream and an iroh stream pair.
+///
+/// Returns when either direction reaches end of stream or fails. On a clean
+/// end, `iroh_send` is finished so the peer reads all data and then a clean end
+/// of stream. On failure, `iroh_send` is reset so the peer sees an error rather
+/// than a stream that looks complete but is truncated.
+///
+/// The caller must keep the connection open until the peer has the data.
+/// Dropping it closes the connection and discards data still in flight.
+pub(crate) async fn bridge_streams<R, W>(
+    local_read: &mut R,
+    local_write: &mut W,
+    iroh_send: &mut SendStream,
+    iroh_recv: &mut RecvStream,
+) -> io::Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let result = tokio::select! {
+        result = copy_flush(local_read, iroh_send) => result,
+        result = copy_flush(iroh_recv, local_write) => result,
+    };
+    // Both calls fail only if the stream was already finished or reset, which
+    // is harmless here.
+    match result {
+        Ok(_) => iroh_send.finish().ok(),
+        Err(_) => iroh_send.reset(0u32.into()).ok(),
+    };
+    result.map(|_| ())
 }
 
 /// Copy data from reader to writer, flushing after every write.
 /// Unlike `tokio::io::copy` (which buffers 8KB before flushing),
 /// this ensures interactive data like SSH keystrokes are forwarded
 /// immediately.
-pub(crate) async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> io::Result<u64>
+async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> io::Result<u64>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
