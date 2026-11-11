@@ -147,10 +147,16 @@ impl Tunnel {
         Ok(builder)
     }
 
+    /// Forwards connections to a local port to the roost `remote`.
+    ///
+    /// Binds a free port on 127.0.0.1 and prints it, so you can connect with ssh.
     pub async fn fly(&self, remote: EndpointId) -> Result<()> {
-        let bind_addr = format!("127.0.0.1:{}", 0);
-        let listener = TcpListener::bind(&bind_addr).await?;
-        tracing::info!("fly: listening on {}", listener.local_addr()?);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port();
+        tracing::info!("fly: listening on 127.0.0.1:{port}");
+        println!("pigeon is ready on 127.0.0.1:{port}");
+        println!();
+        println!("  Fly with: ssh -p {port} <user>@127.0.0.1");
         prepare_pigeon(self.endpoint().clone(), listener, remote).await
     }
 
