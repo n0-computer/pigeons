@@ -14,6 +14,12 @@ pub fn home_ssh_dir() -> anyhow::Result<PathBuf> {
     Ok(distro_home.join(".ssh"))
 }
 
+/// Loads the roost's secret key from `ssh_dir`, or generates one if there is none.
+///
+/// The secret key file is the source of truth for the roost's identity. If it
+/// exists, it is loaded, and a missing or mismatched public key file is
+/// rewritten from it. A new key is generated only when the secret key file does
+/// not exist.
 pub async fn dot_ssh_secret_key(ssh_dir: PathBuf) -> anyhow::Result<SecretKey> {
     let pub_key = ssh_dir.join("pigeons_ed25519.pub");
     let priv_key = ssh_dir.join("pigeons_ed25519");
@@ -23,23 +29,37 @@ pub async fn dot_ssh_secret_key(ssh_dir: PathBuf) -> anyhow::Result<SecretKey> {
         fs::create_dir_all(&ssh_dir).await?;
     }
 
-    if pub_key.exists() && priv_key.exists() {
-        tracing::debug!("loading existing keys from {}", ssh_dir.display());
-        let secret_key = fs::read(&priv_key)
+    let secret_key = if priv_key.exists() {
+        tracing::debug!("loading existing key from {}", priv_key.display());
+        let encoded = fs::read(&priv_key)
             .await
             .with_context(|| format!("failed to read secret key from {}", priv_key.display()))?;
-        Ok(decode_secret_key(&secret_key)
-            .with_context(|| format!("failed to load secret key from {}", priv_key.display()))?)
+        decode_secret_key(&encoded)
+            .with_context(|| format!("failed to load secret key from {}", priv_key.display()))?
     } else {
-        tracing::info!("generating new keys in {}", ssh_dir.display());
+        tracing::info!("generating new key in {}", ssh_dir.display());
         let secret_key = SecretKey::generate();
-        let public_key = secret_key.public();
-
-        fs::write(&pub_key, z32::encode(public_key.as_bytes())).await?;
+        // Written first: once it exists, the identity survives a crash before
+        // the public key file is written.
         write_secret_key(&priv_key, &z32::encode(&secret_key.to_bytes())).await?;
+        secret_key
+    };
 
-        Ok(secret_key)
+    let expected_pub = z32::encode(secret_key.public().as_bytes());
+    let current_pub = fs::read_to_string(&pub_key).await.ok();
+    if current_pub.as_deref().map(str::trim) != Some(expected_pub.as_str()) {
+        if current_pub.is_some() {
+            tracing::warn!(
+                "{} does not match the secret key, rewriting it",
+                pub_key.display()
+            );
+        }
+        fs::write(&pub_key, &expected_pub)
+            .await
+            .with_context(|| format!("failed to write {}", pub_key.display()))?;
     }
+
+    Ok(secret_key)
 }
 
 /// Write the secret key, readable only by its owner on unix.
@@ -316,6 +336,8 @@ pub(crate) async fn ensure_local_ssh_server_exists(ssh_port: u16) -> anyhow::Res
 
 #[cfg(test)]
 mod tests {
+    use std::fs::{read_to_string, remove_file, write};
+
     use super::*;
 
     #[test]
@@ -354,6 +376,43 @@ mod tests {
         let reloaded = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
 
         assert_eq!(generated.to_bytes(), reloaded.to_bytes());
+    }
+
+    /// Checks that a missing public key file does not replace the secret key.
+    ///
+    /// It used to trigger a new key, which overwrote the existing secret key
+    /// and changed the roost's endpoint ID.
+    #[tokio::test]
+    async fn missing_public_key_keeps_the_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let generated = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+        let pub_path = dir.path().join("pigeons_ed25519.pub");
+        remove_file(&pub_path).unwrap();
+
+        let reloaded = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+
+        assert_eq!(generated.to_bytes(), reloaded.to_bytes());
+        assert_eq!(
+            read_to_string(&pub_path).unwrap(),
+            z32::encode(generated.public().as_bytes())
+        );
+    }
+
+    #[tokio::test]
+    async fn mismatched_public_key_is_rewritten_from_the_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let generated = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+        let pub_path = dir.path().join("pigeons_ed25519.pub");
+        let other = SecretKey::generate();
+        write(&pub_path, z32::encode(other.public().as_bytes())).unwrap();
+
+        let reloaded = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+
+        assert_eq!(generated.to_bytes(), reloaded.to_bytes());
+        assert_eq!(
+            read_to_string(&pub_path).unwrap(),
+            z32::encode(generated.public().as_bytes())
+        );
     }
 
     /// The key is the roost's identity, so anyone who can read it can
