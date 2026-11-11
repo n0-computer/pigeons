@@ -285,8 +285,10 @@ async fn main() -> anyhow::Result<()> {
                     let id = tunnel.endpoint().id();
 
                     // If running as root (service mode), publish the endpoint ID
-                    // so unprivileged users can read it via 'pigeons status'
-                    if self_runas::is_elevated() {
+                    // so unprivileged users can read it via 'pigeons service status'.
+                    // An ephemeral roost is never the service, and publishing its
+                    // throwaway ID would replace the service's.
+                    if self_runas::is_elevated() && !args.ephemeral {
                         let dir = Path::new("/etc/pigeons");
                         fs::create_dir_all(dir).await?;
                         fs::write(dir.join("endpoint_id"), id.to_string().as_bytes()).await?;
