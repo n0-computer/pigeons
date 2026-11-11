@@ -308,16 +308,26 @@ where
     result.map(|_| ())
 }
 
-/// Copy data from reader to writer, flushing after every write.
-/// Unlike `tokio::io::copy` (which buffers 8KB before flushing),
-/// this ensures interactive data like SSH keystrokes are forwarded
-/// immediately.
+/// Size of the buffer for each copy direction of a tunnel.
+///
+/// SSH sends channel data in packets of up to 32 KiB. A larger buffer moves
+/// bulk transfers such as scp in fewer reads and writes, which matters most for
+/// stdin and stdout: tokio serves each of their reads and writes on a blocking
+/// thread.
+const COPY_BUF_SIZE: usize = 64 * 1024;
+
+/// Copies data from reader to writer, flushing after every write.
+///
+/// Unlike `tokio::io::copy`, which buffers before it flushes, this forwards
+/// interactive data such as SSH keystrokes immediately.
 async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> io::Result<u64>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut buf = [0u8; 8 * 1024];
+    // On the heap: an array this size would make every future that holds a
+    // copy direction 64 KiB larger.
+    let mut buf = vec![0u8; COPY_BUF_SIZE];
     let mut total = 0u64;
     loop {
         let n = reader.read(&mut buf).await?;
