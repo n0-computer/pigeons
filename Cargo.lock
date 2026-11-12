@@ -715,9 +715,9 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "6.0.0"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
 dependencies = [
  "dirs-sys",
 ]
@@ -781,9 +781,9 @@ dependencies = [
 
 [[package]]
 name = "ed25519-dalek"
-version = "3.0.0-rc.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b011170fe4f04665565b4110afef66774fe9ffff278f3eb5b81cc73d26e27d60"
+checksum = "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
@@ -1671,21 +1671,21 @@ dependencies = [
 
 [[package]]
 name = "iroh-services"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1a88cd95fbd20abd9eadc4df91c722915dc943412b964e915f35b0b0a46a1fd"
+checksum = "7e03fe6d35ad303cf364941cba65946f2ad1eb9d531f17954f1cf7b6885fc4ea"
 dependencies = [
- "anyhow",
  "base64 0.22.1",
  "built",
  "bytes",
+ "cfg_aliases",
  "data-encoding",
- "derive_more",
  "ed25519-dalek",
  "futures-buffered",
  "getrandom 0.4.3",
  "iroh",
  "iroh-metrics",
+ "iroh-services-proto",
  "iroh-tickets",
  "irpc",
  "irpc-iroh",
@@ -1697,11 +1697,28 @@ dependencies = [
  "rcan",
  "serde",
  "serde_json",
- "strum",
- "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "iroh-services-proto"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9c8f9110c270a6079bacb2b0fc4b59ed84555692edbe89cb6a9cec4c48b1eb2"
+dependencies = [
+ "derive_more",
+ "iroh",
+ "iroh-metrics",
+ "irpc",
+ "n0-error",
+ "rcan",
+ "serde",
+ "strum",
+ "tracing",
  "uuid",
 ]
 
@@ -3263,6 +3280,9 @@ name = "signature"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
+dependencies = [
+ "rand_core",
+]
 
 [[package]]
 name = "simd_cesu8"
