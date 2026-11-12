@@ -96,7 +96,7 @@ impl TunnelBuilder {
         let isvc_client = match self.isvc_api_secret {
             Some(secret) => {
                 let client = iroh_services::Client::builder(&endpoint)
-                    .api_secret(secret)?
+                    .api_secret(secret)
                     .build()
                     .await?;
                 Some(client)
