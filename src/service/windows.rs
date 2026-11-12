@@ -566,11 +566,11 @@ mod service_runtime {
         ffi::OsString,
         io,
         path::{Path, PathBuf},
-        sync::mpsc,
+        sync::Arc,
         time::Duration,
     };
 
-    use tokio::{fs, runtime::Builder};
+    use tokio::{fs, runtime::Builder, sync::Notify};
     use tracing_appender::rolling;
     use windows_service::{
         Error as WinServiceError, Result as WinResult, define_windows_service,
@@ -618,19 +618,25 @@ mod service_runtime {
 
         tracing::info!("run_service_worker: SSH port = {}", ssh_port);
 
-        let (shutdown_tx, shutdown_rx) = mpsc::channel();
-        let event_handler = move |control_event| -> ServiceControlHandlerResult {
-            match control_event {
-                ServiceControl::Stop => {
-                    let _ = shutdown_tx.send(());
-                    ServiceControlHandlerResult::NoError
+        // The control handler runs on a thread of the service control manager.
+        // `notify_one` stores a permit if the roost task is not waiting yet, so
+        // a stop request that arrives during startup is not lost.
+        let shutdown = Arc::new(Notify::new());
+        let event_handler = {
+            let shutdown = Arc::clone(&shutdown);
+            move |control_event| -> ServiceControlHandlerResult {
+                match control_event {
+                    ServiceControl::Stop => {
+                        shutdown.notify_one();
+                        ServiceControlHandlerResult::NoError
+                    }
+                    ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+                    ServiceControl::UserEvent(code) if code.to_raw() == STOP_EVENT_CODE => {
+                        shutdown.notify_one();
+                        ServiceControlHandlerResult::NoError
+                    }
+                    _ => ServiceControlHandlerResult::NotImplemented,
                 }
-                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-                ServiceControl::UserEvent(code) if code.to_raw() == STOP_EVENT_CODE => {
-                    let _ = shutdown_tx.send(());
-                    ServiceControlHandlerResult::NoError
-                }
-                _ => ServiceControlHandlerResult::NotImplemented,
             }
         };
 
@@ -686,8 +692,7 @@ mod service_runtime {
                         tracing::warn!("failed to write endpoint_id: {err}");
                     }
 
-                    // Block until shutdown signal
-                    shutdown_rx.recv().ok();
+                    shutdown.notified().await;
                     if let Err(err) = tunnel.close().await {
                         tracing::error!("error closing tunnel: {err:?}");
                     }
@@ -699,8 +704,8 @@ mod service_runtime {
         });
 
         // If the roost task exits on its own (error path), we still need
-        // to clean up. If shutdown_rx fires inside the task, it will
-        // return naturally.
+        // to clean up. After a shutdown notification, the task returns
+        // naturally.
         runtime.block_on(async {
             let _ = server_handle.await;
         });

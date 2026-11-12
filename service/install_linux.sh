@@ -6,7 +6,8 @@ if ! /usr/bin/nc -z 127.0.0.1 [SSHPORT] 2>/dev/null && ! nc -z 127.0.0.1 [SSHPOR
     echo ""
 fi
 
-echo "[Unit]
+cat > /etc/systemd/system/pigeons.service <<'UNIT_EOF'
+[Unit]
 Description=pigeons
 
 [Service]
@@ -18,7 +19,8 @@ Restart=on-failure
 RestartSec=3s
 
 [Install]
-WantedBy=multi-user.target" > /etc/systemd/system/pigeons.service
+WantedBy=multi-user.target
+UNIT_EOF
 
 if systemctl is-active --quiet pigeons.service 2>/dev/null; then
     systemctl restart pigeons.service
