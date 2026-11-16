@@ -348,3 +348,63 @@ jobs:
           Stop-Job -Job $ServerJob
           Remove-Job -Job $ServerJob
           exit 1
+
+  # Android has no runner to execute the binary on, so this job is build-only:
+  # it keeps the android targets compiling on every PR.
+  android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install rust stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Download Android NDK
+        run: |
+          curl -fLo ndk.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q ndk.zip
+
+      - name: Build (android)
+        env:
+          NDK_BIN: android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin
+        run: |
+          export PATH="$NDK_BIN:$PATH"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android24-clang
+          export CC_aarch64-linux-android=aarch64-linux-android24-clang
+          cargo build --locked --release --target aarch64-linux-android
+
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=armv7a-linux-androideabi24-clang
+          export CC_armv7_linux_androideabi=armv7a-linux-androideabi24-clang
+          cargo build --locked --release --target armv7-linux-androideabi
+
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=x86_64-linux-android24-clang
+          export CC_x86_64_linux_android=x86_64-linux-android24-clang
+          cargo build --locked --release --target x86_64-linux-android
+
+      - name: Upload aarch64 binary artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeons-aarch64-linux-android
+          path: target/aarch64-linux-android/release/pigeons
+          retention-days: 2
+
+      - name: Upload armv7 binary artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeons-armv7-linux-androideabi
+          path: target/armv7-linux-androideabi/release/pigeons
+          retention-days: 2
+
+      - name: Upload x86_64 binary artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeons-x86_64-linux-android
+          path: target/x86_64-linux-android/release/pigeons
+          retention-days: 2
