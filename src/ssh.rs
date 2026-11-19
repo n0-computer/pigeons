@@ -1,5 +1,6 @@
 use std::{
-    fmt,
+    fmt, fs as std_fs,
+    io::{self, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -7,13 +8,19 @@ use anyhow::{Context, bail};
 use ed25519_dalek::SECRET_KEY_LENGTH;
 use homedir::my_home;
 use iroh::{PublicKey, SecretKey};
-use tokio::{fs, net::TcpStream};
+use tokio::{fs, net::TcpStream, task};
 
 pub fn home_ssh_dir() -> anyhow::Result<PathBuf> {
     let distro_home = my_home()?.ok_or_else(|| anyhow::anyhow!("home directory not found"))?;
     Ok(distro_home.join(".ssh"))
 }
 
+/// Loads the roost's secret key from `ssh_dir`, or generates one if there is none.
+///
+/// The secret key file is the source of truth for the roost's identity. If it
+/// exists, it is loaded, and a missing or mismatched public key file is
+/// rewritten from it. A new key is generated only when the secret key file does
+/// not exist.
 pub async fn dot_ssh_secret_key(ssh_dir: PathBuf) -> anyhow::Result<SecretKey> {
     let pub_key = ssh_dir.join("pigeons_ed25519.pub");
     let priv_key = ssh_dir.join("pigeons_ed25519");
@@ -23,23 +30,37 @@ pub async fn dot_ssh_secret_key(ssh_dir: PathBuf) -> anyhow::Result<SecretKey> {
         fs::create_dir_all(&ssh_dir).await?;
     }
 
-    if pub_key.exists() && priv_key.exists() {
-        tracing::debug!("loading existing keys from {}", ssh_dir.display());
-        let secret_key = fs::read(&priv_key)
+    let secret_key = if priv_key.exists() {
+        tracing::debug!("loading existing key from {}", priv_key.display());
+        let encoded = fs::read(&priv_key)
             .await
             .with_context(|| format!("failed to read secret key from {}", priv_key.display()))?;
-        Ok(decode_secret_key(&secret_key)
-            .with_context(|| format!("failed to load secret key from {}", priv_key.display()))?)
+        decode_secret_key(&encoded)
+            .with_context(|| format!("failed to load secret key from {}", priv_key.display()))?
     } else {
-        tracing::info!("generating new keys in {}", ssh_dir.display());
+        tracing::info!("generating new key in {}", ssh_dir.display());
         let secret_key = SecretKey::generate();
-        let public_key = secret_key.public();
-
-        fs::write(&pub_key, z32::encode(public_key.as_bytes())).await?;
+        // Written first: once it exists, the identity survives a crash before
+        // the public key file is written.
         write_secret_key(&priv_key, &z32::encode(&secret_key.to_bytes())).await?;
+        secret_key
+    };
 
-        Ok(secret_key)
+    let expected_pub = z32::encode(secret_key.public().as_bytes());
+    let current_pub = fs::read_to_string(&pub_key).await.ok();
+    if current_pub.as_deref().map(str::trim) != Some(expected_pub.as_str()) {
+        if current_pub.is_some() {
+            tracing::warn!(
+                "{} does not match the secret key, rewriting it",
+                pub_key.display()
+            );
+        }
+        fs::write(&pub_key, &expected_pub)
+            .await
+            .with_context(|| format!("failed to write {}", pub_key.display()))?;
     }
+
+    Ok(secret_key)
 }
 
 /// Write the secret key, readable only by its owner on unix.
@@ -191,39 +212,67 @@ pub async fn list_tunnel_hosts() -> anyhow::Result<Vec<SshConfigPigeonEntry>> {
         .await
         .with_context(|| format!("failed to read {}", config_path.display()))?;
 
+    Ok(parse_tunnel_hosts(&content))
+}
+
+/// Finds the pigeons-managed Host blocks in ssh config content.
+fn parse_tunnel_hosts(content: &str) -> Vec<SshConfigPigeonEntry> {
     let mut entries = Vec::new();
-    let mut current_host: Option<String> = None;
+    // The patterns of the current Host block, or `None` outside a Host block.
+    let mut current_host: Option<&str> = None;
     let mut current_endpoint: Option<String> = None;
 
     for line in content.lines() {
-        let trimmed = line.trim();
-
-        if let Some(rest) = trimmed.strip_prefix("Host ") {
-            // Flush previous block if it was a pigeon entry
+        let Some((keyword, args)) = parse_config_line(line) else {
+            continue;
+        };
+        if is_block_start(&keyword) {
             if let (Some(host), Some(endpoint)) = (current_host.take(), current_endpoint.take()) {
                 entries.push(SshConfigPigeonEntry {
-                    name: host,
+                    name: host.to_string(),
                     endpoint_id: endpoint,
                 });
             }
-            current_host = Some(rest.trim().to_string());
+            current_host = (keyword == "host").then_some(args);
             current_endpoint = None;
-        } else if let Some(proxy_cmd) = trimmed.strip_prefix("ProxyCommand ")
-            && let Some(endpoint_id) = parse_pigeons_proxy_command(proxy_cmd.trim())
+        } else if keyword == "proxycommand"
+            && let Some(endpoint_id) = parse_pigeons_proxy_command(args)
         {
             current_endpoint = Some(endpoint_id);
         }
     }
 
-    // Flush last block
     if let (Some(host), Some(endpoint)) = (current_host, current_endpoint) {
         entries.push(SshConfigPigeonEntry {
-            name: host,
+            name: host.to_string(),
             endpoint_id: endpoint,
         });
     }
 
-    Ok(entries)
+    entries
+}
+
+/// Splits an ssh config line into its lowercased keyword and its arguments.
+///
+/// Returns `None` for blank lines and comments. Like ssh, accepts both
+/// `Keyword args` and `Keyword=args`, and treats keywords case-insensitively.
+fn parse_config_line(line: &str) -> Option<(String, &str)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let end = line
+        .find(|c: char| c.is_whitespace() || c == '=')
+        .unwrap_or(line.len());
+    let (keyword, rest) = line.split_at(end);
+    let rest = rest.trim_start();
+    let args = rest.strip_prefix('=').unwrap_or(rest).trim();
+    Some((keyword.to_ascii_lowercase(), args))
+}
+
+/// Returns true for the keywords that start a new block in ssh config.
+fn is_block_start(keyword: &str) -> bool {
+    keyword == "host" || keyword == "match"
 }
 
 /// Parse a ProxyCommand value like "pigeons fly --stdio <endpoint_id>"
@@ -238,47 +287,79 @@ fn parse_pigeons_proxy_command(cmd: &str) -> Option<String> {
     }
 }
 
-/// Remove a Host block by name from ssh config content.
-/// A Host block starts with "Host <name>" and ends at the next "Host " line
-/// or end of file. Returns an error if the block exists but does not contain
-/// a ProxyCommand that invokes pigeons.
+/// Removes the pigeons Host block for `name` from ssh config content.
+///
+/// A block starts at a `Host` or `Match` line and ends before the next one, as
+/// in ssh. Only a `Host` line with `name` as its sole pattern selects a block,
+/// as pigeons writes it. Comments after the block's last directive are kept,
+/// since they usually introduce the next block.
+///
+/// # Errors
+///
+/// Returns an error if the selected block has no ProxyCommand that invokes
+/// pigeons.
 fn remove_host_block(content: &str, name: &str) -> anyhow::Result<String> {
     let mut result = String::new();
-    let mut skipping = false;
-    let mut found = false;
+    // Inside the block to remove, comments and blank lines are held back until
+    // it is clear whether a directive of the block follows them.
+    let mut held_back: Vec<&str> = Vec::new();
+    let mut in_block = false;
     let mut has_pigeons_proxy = false;
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        if let Some(rest) = trimmed.strip_prefix("Host ") {
-            if rest.trim() == name {
-                skipping = true;
-                found = true;
-                has_pigeons_proxy = false;
-                continue;
-            } else {
-                if found && !has_pigeons_proxy {
-                    bail!("host '{name}' is not configured to use pigeons");
-                }
-                skipping = false;
-            }
+    let end_block = |result: &mut String,
+                     held_back: &mut Vec<&str>,
+                     has_pigeons_proxy: bool|
+     -> anyhow::Result<()> {
+        if !has_pigeons_proxy {
+            bail!("host '{name}' is not configured to use pigeons");
         }
-
-        if skipping {
-            if trimmed.starts_with("ProxyCommand") && trimmed.contains("pigeons") {
-                has_pigeons_proxy = true;
+        for line in held_back.drain(..) {
+            // The blank line before the removed block already separates the
+            // blocks around it.
+            let separated = result.is_empty() || result.ends_with("\n\n");
+            if separated && line.trim().is_empty() {
+                continue;
             }
-            continue;
+            result.push_str(line);
+            result.push('\n');
+        }
+        Ok(())
+    };
+
+    for line in content.lines() {
+        match parse_config_line(line) {
+            Some((keyword, args)) if is_block_start(&keyword) => {
+                if in_block {
+                    end_block(&mut result, &mut held_back, has_pigeons_proxy)?;
+                    in_block = false;
+                }
+                if keyword == "host" && args.split_whitespace().eq([name]) {
+                    in_block = true;
+                    has_pigeons_proxy = false;
+                    continue;
+                }
+            }
+            Some((keyword, args)) if in_block => {
+                if keyword == "proxycommand" && args.contains("pigeons") {
+                    has_pigeons_proxy = true;
+                }
+                // Comments between directives belong to the block.
+                held_back.clear();
+                continue;
+            }
+            None if in_block => {
+                held_back.push(line);
+                continue;
+            }
+            _ => {}
         }
 
         result.push_str(line);
         result.push('\n');
     }
 
-    // Check after the last block (no trailing Host line to trigger the check)
-    if found && !has_pigeons_proxy {
-        bail!("host '{name}' is not configured to use pigeons");
+    if in_block {
+        end_block(&mut result, &mut held_back, has_pigeons_proxy)?;
     }
 
     // Trim trailing blank lines
@@ -289,15 +370,63 @@ fn remove_host_block(content: &str, name: &str) -> anyhow::Result<String> {
     Ok(result)
 }
 
-async fn atomic_write(path: &PathBuf, content: &str) -> anyhow::Result<()> {
-    let dir = path.parent().unwrap();
-    let temp_path = dir.join(".config.pigeons.tmp");
-    fs::write(&temp_path, content)
+/// Replaces the content of the file at `path` atomically.
+///
+/// If `path` is a symlink, the file it points to is replaced and the link
+/// stays in place, so configs managed by dotfile tools keep working. The new
+/// file keeps the permissions of the file it replaces. A new file is readable
+/// only by its owner.
+///
+/// # Errors
+///
+/// Returns an error if `path` is a symlink to a file that does not exist, or
+/// if the file cannot be written.
+async fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
+    let path = path.to_path_buf();
+    let content = content.to_owned();
+    task::spawn_blocking(move || atomic_write_blocking(&path, &content))
         .await
-        .with_context(|| format!("failed to write {}", temp_path.display()))?;
-    fs::rename(&temp_path, path)
-        .await
-        .with_context(|| format!("failed to rename temp file to {}", path.display()))?;
+        .context("ssh config write task panicked")?
+}
+
+fn atomic_write_blocking(path: &Path, content: &str) -> anyhow::Result<()> {
+    let target = match std_fs::canonicalize(path) {
+        Ok(target) => target,
+        // Writing through the link would create a file at a place the user
+        // may not expect, and replacing the link would lose it.
+        Err(err) if err.kind() == io::ErrorKind::NotFound && path.is_symlink() => {
+            let link_target = std_fs::read_link(path)
+                .with_context(|| format!("failed to read the symlink {}", path.display()))?;
+            bail!(
+                "{} is a symlink to {}, which does not exist",
+                path.display(),
+                link_target.display()
+            );
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to resolve {}", path.display()));
+        }
+    };
+    let dir = target
+        .parent()
+        .with_context(|| format!("{} has no parent directory", target.display()))?;
+
+    // A unique name, so concurrent runs do not write to the same temp file.
+    let mut temp = tempfile::Builder::new()
+        .prefix(".config.pigeons.")
+        .tempfile_in(dir)
+        .with_context(|| format!("failed to create a temp file in {}", dir.display()))?;
+    temp.write_all(content.as_bytes())
+        .and_then(|()| match std_fs::metadata(&target) {
+            Ok(metadata) => temp.as_file().set_permissions(metadata.permissions()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        })
+        .and_then(|()| temp.as_file().sync_all())
+        .with_context(|| format!("failed to write {}", temp.path().display()))?;
+    temp.persist(&target)
+        .with_context(|| format!("failed to replace {}", target.display()))?;
     Ok(())
 }
 
@@ -316,6 +445,13 @@ pub(crate) async fn ensure_local_ssh_server_exists(ssh_port: u16) -> anyhow::Res
 
 #[cfg(test)]
 mod tests {
+    use std::fs::{read_to_string, remove_file, write};
+    #[cfg(unix)]
+    use std::{
+        fs::{Permissions, metadata, set_permissions},
+        os::unix::fs::{PermissionsExt as _, symlink},
+    };
+
     use super::*;
 
     #[test]
@@ -356,13 +492,48 @@ mod tests {
         assert_eq!(generated.to_bytes(), reloaded.to_bytes());
     }
 
+    /// Checks that a missing public key file does not replace the secret key.
+    ///
+    /// It used to trigger a new key, which overwrote the existing secret key
+    /// and changed the roost's endpoint ID.
+    #[tokio::test]
+    async fn missing_public_key_keeps_the_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let generated = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+        let pub_path = dir.path().join("pigeons_ed25519.pub");
+        remove_file(&pub_path).unwrap();
+
+        let reloaded = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+
+        assert_eq!(generated.to_bytes(), reloaded.to_bytes());
+        assert_eq!(
+            read_to_string(&pub_path).unwrap(),
+            z32::encode(generated.public().as_bytes())
+        );
+    }
+
+    #[tokio::test]
+    async fn mismatched_public_key_is_rewritten_from_the_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let generated = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+        let pub_path = dir.path().join("pigeons_ed25519.pub");
+        let other = SecretKey::generate();
+        write(&pub_path, z32::encode(other.public().as_bytes())).unwrap();
+
+        let reloaded = dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
+
+        assert_eq!(generated.to_bytes(), reloaded.to_bytes());
+        assert_eq!(
+            read_to_string(&pub_path).unwrap(),
+            z32::encode(generated.public().as_bytes())
+        );
+    }
+
     /// The key is the roost's identity, so anyone who can read it can
     /// impersonate the roost. It must not be group- or world-readable.
     #[cfg(unix)]
     #[tokio::test]
     async fn generated_key_is_owner_readable_only() {
-        use std::{fs::metadata, os::unix::fs::PermissionsExt as _};
-
         let dir = tempfile::tempdir().unwrap();
         dot_ssh_secret_key(dir.path().to_path_buf()).await.unwrap();
 
@@ -371,6 +542,66 @@ mod tests {
             .permissions()
             .mode();
 
+        assert_eq!(mode & 0o777, 0o600, "got mode {:o}", mode & 0o777);
+    }
+
+    /// Checks that writing through a symlinked config keeps the symlink.
+    ///
+    /// The config was replaced by renaming a temp file over it, which turned a
+    /// symlink into a plain file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_keeps_a_symlinked_config_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles-ssh-config");
+        let link = dir.path().join("config");
+        write(&real, "Host old\n").unwrap();
+        symlink(&real, &link).unwrap();
+
+        atomic_write(&link, "Host new\n").await.unwrap();
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(read_to_string(&real).unwrap(), "Host new\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_rejects_a_broken_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("config");
+        symlink(dir.path().join("missing"), &link).unwrap();
+
+        let err = atomic_write(&link, "Host new\n").await.unwrap_err();
+
+        assert!(err.to_string().contains("does not exist"), "got: {err}");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(!dir.path().join("missing").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_keeps_the_file_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        write(&path, "Host old\n").unwrap();
+        set_permissions(&path, Permissions::from_mode(0o640)).unwrap();
+
+        atomic_write(&path, "Host new\n").await.unwrap();
+
+        let mode = metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640, "got mode {:o}", mode & 0o777);
+        assert_eq!(read_to_string(&path).unwrap(), "Host new\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_write_creates_a_new_file_readable_by_its_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+
+        atomic_write(&path, "Host new\n").await.unwrap();
+
+        let mode = metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "got mode {:o}", mode & 0o777);
     }
 
@@ -401,6 +632,88 @@ mod tests {
             .to_string();
 
         assert!(err.contains("not configured to use pigeons"), "got: {err}");
+    }
+
+    /// Checks that a Match block after a pigeon entry is kept.
+    ///
+    /// It used to count as part of the entry and was deleted with it.
+    #[test]
+    fn remove_host_block_keeps_a_following_match_block() {
+        let matched = "Match host *.internal\n    User admin\n";
+
+        assert_eq!(
+            remove_host_block(&format!("{PIGEON_BLOCK}{matched}"), "my-server").unwrap(),
+            matched
+        );
+    }
+
+    #[test]
+    fn remove_host_block_keeps_comments_that_introduce_the_next_block() {
+        let before = "Host home\n    HostName home.example.com\n\n";
+        let next = "# work machines\nHost work\n    HostName work.example.com\n";
+
+        assert_eq!(
+            remove_host_block(&format!("{before}{PIGEON_BLOCK}\n{next}"), "my-server").unwrap(),
+            format!("{before}{next}")
+        );
+    }
+
+    #[test]
+    fn remove_host_block_leaves_one_blank_line_between_the_remaining_blocks() {
+        let before = "Host home\n    HostName home.example.com\n";
+        let after = "Host work\n    HostName work.example.com\n";
+
+        assert_eq!(
+            remove_host_block(&format!("{before}\n{PIGEON_BLOCK}\n{after}"), "my-server").unwrap(),
+            format!("{before}\n{after}")
+        );
+    }
+
+    #[test]
+    fn remove_host_block_matches_keywords_like_ssh() {
+        for block in [
+            "host my-server\n    proxycommand pigeons fly --stdio ABC\n",
+            "Host=my-server\n    ProxyCommand=pigeons fly --stdio ABC\n",
+            "Host\tmy-server\n\tProxyCommand pigeons fly --stdio ABC\n",
+        ] {
+            assert_eq!(
+                remove_host_block(block, "my-server").unwrap(),
+                "",
+                "{block:?}"
+            );
+        }
+    }
+
+    /// Checks that a Host line which lists the name among other patterns is kept.
+    ///
+    /// pigeons never writes such a line, and removing it would also remove the
+    /// other hosts.
+    #[test]
+    fn remove_host_block_keeps_a_shared_host_line() {
+        let content = "Host my-server other\n    User admin\n";
+
+        assert_eq!(remove_host_block(content, "my-server").unwrap(), content);
+    }
+
+    #[test]
+    fn parse_tunnel_hosts_ignores_proxy_commands_in_match_blocks() {
+        let content =
+            format!("{PIGEON_BLOCK}Match host foo\n    ProxyCommand pigeons fly --stdio DEF\n");
+
+        let entries = parse_tunnel_hosts(&content);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "my-server");
+        assert_eq!(entries[0].endpoint_id, "ABC");
+    }
+
+    #[test]
+    fn parse_tunnel_hosts_matches_keywords_like_ssh() {
+        let entries = parse_tunnel_hosts("host=a\n  proxycommand=pigeons fly --stdio ABC\n");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "a");
+        assert_eq!(entries[0].endpoint_id, "ABC");
     }
 
     #[test]

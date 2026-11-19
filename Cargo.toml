@@ -58,6 +58,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.1"
 dirs = "7.0.0"
 
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["time"] }
+
 [target.'cfg(windows)'.dependencies.windows-service]
 version = "0.8.1"
 [target.'cfg(windows)'.dependencies.windows-sys]

@@ -7,9 +7,10 @@ use std::{
 use clap::{ArgAction, Args, Parser, Subcommand};
 use iroh::{EndpointId, RelayUrl};
 use iroh_pigeons::{
-    Config, RoostConfig, ServiceParams, Tunnel, add_tunnel_host, home_ssh_dir, install_service,
-    list_tunnel_hosts, publish_telemetry_choice_for_service, remove_tunnel_host,
-    resolve_binary_path, restart_service, service_endpoint_id, service_log, uninstall_service,
+    Config, RoostConfig, ServiceParams, ServiceRunState, Tunnel, add_tunnel_host, home_ssh_dir,
+    install_service, list_tunnel_hosts, publish_telemetry_choice_for_service, remove_tunnel_host,
+    resolve_binary_path, restart_service, service_endpoint_id, service_log, service_run_state,
+    uninstall_service, validate_relay_urls,
 };
 use tokio::{
     fs,
@@ -284,8 +285,10 @@ async fn main() -> anyhow::Result<()> {
                     let id = tunnel.endpoint().id();
 
                     // If running as root (service mode), publish the endpoint ID
-                    // so unprivileged users can read it via 'pigeons status'
-                    if self_runas::is_elevated() {
+                    // so unprivileged users can read it via 'pigeons service status'.
+                    // An ephemeral roost is never the service, and publishing its
+                    // throwaway ID would replace the service's.
+                    if self_runas::is_elevated() && !args.ephemeral {
                         let dir = Path::new("/etc/pigeons");
                         fs::create_dir_all(dir).await?;
                         fs::write(dir.join("endpoint_id"), id.to_string().as_bytes()).await?;
@@ -406,9 +409,11 @@ async fn main() -> anyhow::Result<()> {
                     ssh_port,
                     relay_url,
                 } => {
-                    // Resolve and validate the binary path *before* elevating,
-                    // so the user sees any error in their own terminal.
+                    // Resolve and validate the binary path and relay URLs
+                    // *before* elevating, so the user sees any error in their
+                    // own terminal.
                     let binary_path = resolve_binary_path()?;
+                    validate_relay_urls(&relay_url)?;
 
                     if !self_runas::is_elevated() {
                         self_runas::admin()?;
@@ -446,18 +451,40 @@ async fn main() -> anyhow::Result<()> {
                     Ok(())
                 }
                 ServiceCmd::Status => {
-                    match service_endpoint_id().await {
-                        Some(id) => {
-                            println!("Service:       running");
-                            println!();
-                            println!("  Roost ID: {id}");
-                            println!();
-                            println!("  Connect with:");
-                            println!("    pigeons add --id {id} --name my-roost");
+                    let state = service_run_state();
+                    let id = service_endpoint_id().await;
+                    // If the service manager cannot be asked, the ID file is the
+                    // next best sign of an installed service: the roost
+                    // publishes its ID on its first start.
+                    let installed = match state {
+                        ServiceRunState::Running | ServiceRunState::NotRunning => true,
+                        ServiceRunState::NotInstalled => false,
+                        ServiceRunState::Unknown => id.is_some(),
+                    };
+                    if installed {
+                        let state_label = match state {
+                            ServiceRunState::Running => "running",
+                            ServiceRunState::NotRunning => "not running",
+                            ServiceRunState::NotInstalled | ServiceRunState::Unknown => {
+                                "unknown state"
+                            }
+                        };
+                        println!("Service:       {state_label}");
+                        if state == ServiceRunState::NotRunning {
+                            println!("  Start it with: pigeons service restart");
                         }
-                        None => {
-                            println!("Service:       not installed");
+                        println!();
+                        match id {
+                            Some(id) => {
+                                println!("  Roost ID: {id}");
+                                println!();
+                                println!("  Connect with:");
+                                println!("    pigeons add --id {id} --name my-roost");
+                            }
+                            None => println!("  Roost ID: not published yet"),
                         }
+                    } else {
+                        println!("Service:       not installed");
                     }
                     Ok(())
                 }
