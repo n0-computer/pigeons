@@ -43,7 +43,8 @@ out of them, and open worktrees through `work.sh` itself.
   - `Pigeons/Files/` — file browser and viewer behind the terminal's
     title-bar toggle; Highlightr for code, a custom pass for markdown.
   - `Pigeons/Sessions/` — session list and the `work.sh` sheet.
-  - `Pigeons/Settings/` — roost, user, paths, prefix, device key.
+  - `Pigeons/Settings/` — machines (roost, user, paths, prefix each), font
+    size, device key.
 - `scripts/build-core.sh` — Rust → `ios/PigeonsCore.xcframework`.
 - `scripts/archive.sh` — archive and upload to TestFlight.
 
@@ -62,9 +63,14 @@ tmux and `~/work.sh` must be on that machine, and `~/code` laid out the way
 
 Then let the phone in. The app shows its public key under Settings → This
 device; append it to `~/.ssh/authorized_keys` for your user. Or type your
-password once under Settings → First connection and the app appends the key
-itself. The same ed25519 key is the phone's iroh identity, so there is exactly
-one key to know about.
+password once under the machine's First connection section and the app
+appends the key itself. The same ed25519 key is the phone's iroh identity, so
+there is exactly one key to know about.
+
+Several machines can be set up, each with its own roost id, user, `work.sh`
+layout and tmux prefix (Settings → Machines). The session list is titled with
+the current machine; tap the title to switch. Switching drops the connection
+and dials the other roost; tmux on the first machine is unaffected.
 
 ## Building
 

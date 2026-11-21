@@ -141,21 +141,28 @@ final class RoostClient: ObservableObject {
         }
     }
 
+    /// `AppSettings.connectionKey` of the machine the last connect was for.
+    private(set) var connectionKey: String?
+
     /// Dial the roost and log in. The device key is tried first; `password`
-    /// only when the key is rejected. Watch `state` for the outcome.
-    func connect(roostID: String, user: String, password: String? = nil) {
-        pm_client_connect(handle, roostID, user, password)
+    /// only when the key is rejected. Watch `state` for the outcome. The core
+    /// drops any existing session first, so this is also how to switch
+    /// machines.
+    func connect(to settings: AppSettings, password: String? = nil) {
+        applySettings(settings)
+        connectionKey = settings.connectionKey
+        pm_client_connect(handle, settings.roostID, settings.user, password)
     }
 
     func disconnect() {
+        connectionKey = nil
         pm_client_disconnect(handle)
     }
 
     /// Connect when configured and not already connected or trying to.
     func reconnectIfNeeded(_ settings: AppSettings) {
         guard settings.isConfigured, !state.isBusy, state != .connected else { return }
-        applySettings(settings)
-        connect(roostID: settings.roostID, user: settings.user)
+        connect(to: settings)
     }
 
     // MARK: Requests

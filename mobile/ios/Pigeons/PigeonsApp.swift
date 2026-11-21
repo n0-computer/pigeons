@@ -66,12 +66,11 @@ private struct ConfiguredRoot: View {
     @ObservedObject var client: RoostClient
     @EnvironmentObject private var store: SettingsStore
     @State private var onboarding = false
-    @State private var connectedKey: String?
 
     var body: some View {
         SessionListView()
             .sheet(isPresented: $onboarding) {
-                NavigationStack { SettingsView() }
+                SettingsView()
                     .interactiveDismissDisabled(!store.settings.isConfigured)
             }
             .onAppear {
@@ -79,19 +78,22 @@ private struct ConfiguredRoot: View {
                 client.reconnectIfNeeded(store.settings)
             }
             .task(id: store.settings.connectionKey) {
-                // A different roost or user: start over. The sleep debounces
-                // typing in Settings; cancellation restarts the wait.
-                let key = store.settings.connectionKey
-                guard let previous = connectedKey else {
-                    connectedKey = key // first run: onAppear already connected
+                // The machine, its roost or its user changed: connect to what
+                // is configured now. Switching machines is immediate; edits
+                // to the current machine's fields wait for typing to stop
+                // (cancellation restarts the wait).
+                let settings = store.settings
+                guard settings.connectionKey != client.connectionKey else { return }
+                guard settings.isConfigured else {
+                    client.disconnect()
                     return
                 }
-                guard key != previous, store.settings.isConfigured else { return }
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                connectedKey = key
-                client.disconnect()
-                client.reconnectIfNeeded(store.settings)
+                let sameMachine = client.connectionKey?.hasPrefix("\(settings.currentID?.uuidString ?? "-"):") ?? false
+                if sameMachine {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled else { return }
+                }
+                client.connect(to: settings)
             }
             .onChange(of: store.settings) { _, settings in
                 client.applySettings(settings)

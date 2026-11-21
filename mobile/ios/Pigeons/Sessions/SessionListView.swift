@@ -44,7 +44,26 @@ struct SessionListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("Sessions")
+            .navigationTitle(store.settings.roosts.isEmpty ? "Sessions" : store.settings.current.displayName)
+            .toolbarTitleMenu {
+                ForEach(store.settings.roosts) { roost in
+                    Button {
+                        store.settings.select(roost.id)
+                    } label: {
+                        if roost.id == store.settings.currentID {
+                            Label(roost.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(roost.displayName)
+                        }
+                    }
+                }
+                Divider()
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("Machines…", systemImage: "desktopcomputer")
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -83,7 +102,7 @@ struct SessionListView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                NavigationStack { SettingsView() }
+                SettingsView()
             }
             .confirmationDialog(
                 "Kill \(killTarget?.name ?? "")? Everything running in it stops.",
@@ -100,6 +119,12 @@ struct SessionListView: View {
                 if client.state == .connected {
                     await load()
                 }
+            }
+            .onChange(of: store.settings.connectionKey) { _, _ in
+                // Another machine: nothing listed yet belongs to it.
+                overview = .empty
+                loadError = nil
+                path = NavigationPath()
             }
             .onChange(of: path) { old, new in
                 // Back from a terminal: the list is probably stale.
