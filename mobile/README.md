@@ -184,13 +184,15 @@ which is the point of tmux.
   iOS: netdev 0.46.x uses a macOS-only libc type. `core/Cargo.toml` patches
   netdev to the upstream fix commit (still versioned 0.46.3, which netwatch
   accepts); if the error reappears, make sure the `[patch.crates-io]` entry is
-  intact and run `cargo update -p netdev@0.46.3`. Drop the patch once iroh's
-  netwatch requires netdev 0.47 or later.
+  intact and run `cargo update -p netdev@0.46.3`. iroh 1.5's netwatch 0.20
+  already uses netdev 0.47; the old one is still in the graph through
+  iroh-services 2 → portmapper 0.19. Drop the patch once that moves on.
 - *unresolved imports `libc::RTA_IFP`, `libc::RTAX_DST`, ... / cannot find
   value `RTM_VERSION`* while building `netwatch` for iOS: libc 0.2.190 made
   those constants macOS-only. `core/Cargo.toml` pins `libc = "=0.2.189"`; if
   something pulls a newer libc in, run `cargo update -p libc --precise
-  0.2.189`. Lift the pin when netwatch no longer relies on them on iOS.
+  0.2.189`. Lift the pin when netwatch 0.19 is out of the graph (same path
+  as above); netwatch 0.20 defines the constants itself.
 - *Undefined symbols `_res_9_*`, `_SCDynamicStore*` or `_nw_*`* when linking
   the app: a Rust static library does not carry its link directives, so the
   app has to link `libresolv`, SystemConfiguration and Network itself.

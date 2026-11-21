@@ -18,10 +18,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 iroh-pigeons = { path = "../.." }
 iroh = "1"
-# Pinned: russh 0.62+ wants a stable ed25519-dalek 3, while iroh-services 1.0
-# pins 3.0.0-rc.0, and cargo will not unify a prerelease with `^3`. Lift the pin
-# once the main crate moves to iroh-services 2 (ed25519-dalek >=3.0.0-rc.0).
-russh = { version = "=0.61.2", default-features = false, features = ["ring"] }
+russh = { version = "0.65", default-features = false, features = ["ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "time"] }
 russh-sftp = "3"
 serde = { version = "1", features = ["derive"] }
@@ -30,10 +27,11 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 # Pinned: libc 0.2.190 moved the BSD routing-socket constants (RTM_*, RTAX_*,
-# RTA_IFP, RTF_*) behind `target_os = "macos"`, and netwatch (via iroh) still
-# uses them on every Apple target, so iOS builds fail with newer libc. This
-# pin holds the whole graph at 0.2.189. Lift once netwatch defines those
-# constants itself or gates its BSD route monitor for iOS.
+# RTA_IFP, RTF_*) behind `target_os = "macos"`, and netwatch 0.19 still uses
+# them on every Apple target, so iOS builds fail with newer libc. iroh 1.5
+# moved to netwatch 0.20, which defines them itself, but iroh-services 2.0
+# still pulls portmapper 0.19 -> netwatch 0.19. This pin holds the whole
+# graph at 0.2.189; lift once nothing in the graph needs netwatch 0.19.
 libc = "=0.2.189"
 
 [profile.release]
@@ -46,11 +44,12 @@ panic = "abort"
 tempfile = "3"
 serde_json = "1"
 
-# netdev 0.46.3 (via iroh -> netwatch/portmapper) uses `libc::in6_ifreq`,
-# which libc only defines for macOS, so the iOS targets fail to compile.
-# The fix (shellrow/netdev b3bfb0f, "fix(ios): use only public APIs on iOS")
-# shipped as 0.47.0, which netwatch does not accept yet. Patch to the fix
-# commit, which still carries version 0.46.3; drop once iroh's netwatch
-# requires netdev >= 0.47.
+# netdev 0.46.3 (via iroh-services -> portmapper 0.19 -> netwatch 0.19) uses
+# `libc::in6_ifreq`, which libc only defines for macOS, so the iOS targets
+# fail to compile. The fix (shellrow/netdev b3bfb0f, "fix(ios): use only
+# public APIs on iOS") shipped as 0.47.0, which netwatch 0.19 does not
+# accept; iroh 1.5's netwatch 0.20 already uses 0.47. Patch to the fix
+# commit, which still carries version 0.46.3; drop once nothing in the graph
+# needs netwatch 0.19.
 [patch.crates-io]
 netdev = { git = "https://github.com/shellrow/netdev", rev = "b3bfb0fb5595cd143bfa0b9f07d1ad6e0ef0c313" }

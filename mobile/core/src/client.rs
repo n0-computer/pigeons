@@ -28,7 +28,7 @@ use iroh_pigeons::Tunnel;
 use russh::{
     ChannelMsg, Disconnect,
     client::{self, DisconnectReason, Handle},
-    keys::{PrivateKey, PrivateKeyWithHashAlg, ssh_key},
+    keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate},
 };
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
@@ -784,7 +784,7 @@ impl client::Handler for SshHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &ssh_key::PublicKey,
+        _server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         // The roost was dialed by its iroh endpoint ID, which is the public
         // key the QUIC connection is authenticated against. Whatever answers
