@@ -112,6 +112,12 @@ The tunnel is also usable as a library. Add it with `cargo add iroh-pigeons`;
 the API is documented on [docs.rs][Rust Docs]. Note that the crate is published
 as `iroh-pigeons` while the CLI it installs is called `pigeons`.
 
+## Mobile
+
+`mobile/` holds an iOS app that dials a single roost and drives its tmux
+sessions, built on a Rust core that reuses this crate's tunnel. See
+[mobile/README.md](mobile/README.md).
+
 ## Telemetry
 
 The first time you run a setup command (`roost`, `fly`, `add`, or `service
